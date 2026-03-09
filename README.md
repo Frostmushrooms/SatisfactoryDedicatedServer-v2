@@ -3,9 +3,9 @@
 
 
 
-国内下载地址：http://nas.sxtvip.top:5666/s/d83fc65f36914a22ba
+国内下载地址：[点击下载](http://nas.sxtvip.top:5666/s/d83fc65f36914a22ba)
 
-开源项目地址：[https://github.com/Frostmushrooms/SatisfactoryDedicatedServer-v2?tab=readme-ov-file]
+开源项目地址：[点击下载]([https://github.com/Frostmushrooms/SatisfactoryDedicatedServer-v2?tab=readme-ov-file])
 
 ## QQ群（群内有服务器）
 
