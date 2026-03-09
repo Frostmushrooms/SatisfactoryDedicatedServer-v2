@@ -1,7 +1,7 @@
 ## 幸福工厂服务器一键启动V2版本
 基于 幸福工厂服务器一键启动-win版本重新制作
 
-国内下载地址：[[http://nas.sxtvip.top:5666/s/d83fc65f36914a22ba])
+国内下载地址：(http://nas.sxtvip.top:5666/s/f7124712c248425eb6)
 
 开源项目地址：[[http://nas.sxtvip.top:5666/s/d83fc65f36914a22ba])
 
