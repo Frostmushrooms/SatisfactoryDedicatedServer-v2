@@ -1,5 +1,7 @@
 ## 幸福工厂服务器一键启动V2版本
 基于 幸福工厂服务器一键启动-win版本重新制作
+<img width="1052" height="952" alt="image" src="https://github.com/user-attachments/assets/4f27df5f-4ad9-405f-8f8b-2249970109b2" />
+
 
 
 
