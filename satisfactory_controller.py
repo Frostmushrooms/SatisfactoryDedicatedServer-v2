@@ -13,9 +13,11 @@ from tkinter import *
 from tkinter import ttk, messagebox, filedialog
 import winreg
 import socket
+import ftplib
+from urllib.parse import urlparse
 
 # 版本更新相关配置
-LOCAL_VERSION = "0.1.4"  # 版本号升级
+LOCAL_VERSION = "0.1.6"  # 版本号升级
 REMOTE_VERSION_URL = "http://nas.sxtvip.top:5050/version.json"
 REMOTE_CHANGELOG_URL = "http://nas.sxtvip.top:5050/changelog.json"
 REMOTE_PACKAGE_URL = "http://nas.sxtvip.top:5050/幸福工厂服务器管理器.zip"
@@ -32,35 +34,35 @@ class SatisfactoryServerController:
                 "entry_bg": "#FFFFFF", "entry_fg": "#000000", "text_bg": "#FFFFFF", "text_fg": "#000000",
                 "label_bg": "#FFFFFF", "label_fg": "#000000", "frame_bg": "#F0F0F0",
                 "highlight_bg": "#DDDDDD", "highlight_fg": "#000000",
-                "footer_fg": "#555555"
+                "footer_fg": "#555555", "notebook_bg": "#F0F0F0"
             },
             "dark": {
                 "bg": "#2B2B2B", "fg": "#FFFFFF", "button_bg": "#404040", "button_fg": "#FFFFFF",
                 "entry_bg": "#3C3C3C", "entry_fg": "#FFFFFF", "text_bg": "#1E1E1E", "text_fg": "#CCCCCC",
                 "label_bg": "#2B2B2B", "label_fg": "#FFFFFF", "frame_bg": "#363636",
                 "highlight_bg": "#555555", "highlight_fg": "#FFFFFF",
-                "footer_fg": "#AAAAAA"
+                "footer_fg": "#AAAAAA", "notebook_bg": "#363636"
             },
             "blue": {
                 "bg": "#E6F3FF", "fg": "#003366", "button_bg": "#4A90E2", "button_fg": "#FFFFFF",
                 "entry_bg": "#FFFFFF", "entry_fg": "#003366", "text_bg": "#F0F8FF", "text_fg": "#003366",
                 "label_bg": "#E6F3FF", "label_fg": "#003366", "frame_bg": "#D1E8FF",
                 "highlight_bg": "#7FBFFF", "highlight_fg": "#FFFFFF",
-                "footer_fg": "#0055AA"
+                "footer_fg": "#0055AA", "notebook_bg": "#D1E8FF"
             },
             "green": {
                 "bg": "#E8F5E8", "fg": "#004D00", "button_bg": "#4CAF50", "button_fg": "#FFFFFF",
                 "entry_bg": "#FFFFFF", "entry_fg": "#004D00", "text_bg": "#F0FFF0", "text_fg": "#004D00",
                 "label_bg": "#E8F5E8", "label_fg": "#004D00", "frame_bg": "#D4EDD4",
                 "highlight_bg": "#81C784", "highlight_fg": "#FFFFFF",
-                "footer_fg": "#006600"
+                "footer_fg": "#006600", "notebook_bg": "#D4EDD4"
             },
             "purple": {
                 "bg": "#F3E5F5", "fg": "#4A0072", "button_bg": "#9C27B0", "button_fg": "#FFFFFF",
                 "entry_bg": "#FFFFFF", "entry_fg": "#4A0072", "text_bg": "#FAF3FC", "text_fg": "#4A0072",
                 "label_bg": "#F3E5F5", "label_fg": "#4A0072", "frame_bg": "#E1BEE7",
                 "highlight_bg": "#BA68C8", "highlight_fg": "#FFFFFF",
-                "footer_fg": "#6A0080"
+                "footer_fg": "#6A0080", "notebook_bg": "#E1BEE7"
             }
         }
         
@@ -85,7 +87,7 @@ class SatisfactoryServerController:
         
         self.action_buttons = {} 
         self.latest_changelog = ""
-        self.pending_update_version = "" # 存储待更新的版本号
+        self.pending_update_version = "" 
         
         self.setup_gui()
         self.check_update_on_start()
@@ -108,7 +110,11 @@ class SatisfactoryServerController:
                 "autosave_count": 5,
                 "backup_interval": 30,
                 "backup_retain": 10,
-                "enable_auto_backup": True
+                "enable_auto_backup": True,
+                "monitor_host": "localhost",
+                "backup_locations": [
+                    {"type": "local", "path": "", "enabled": True}
+                ]
             }
             self.save_config()
             
@@ -140,32 +146,22 @@ class SatisfactoryServerController:
         top.title(f"版本 {version} 更新日志")
         top.resizable(False, False)
         
-        # 获取屏幕尺寸，用于居中
         screen_width = top.winfo_screenwidth()
         screen_height = top.winfo_screenheight()
         
-        # --- 关键修改开始：动态计算高度 ---
-        
-        # 1. 计算文本大概有多少行 (每 50 个字符算一行，最少 5 行)
         lines = max(5, len(log_text) // 50 + 2)
-        # 限制最大行数，防止日志太长窗口爆屏 (最多 25 行)
         lines = min(lines, 25)
         
-        # 2. 创建文本框，使用计算出的行数
-        # 注意：这里不再写死 height=20，而是用变量 lines
         log_display = Text(top, height=lines, width=60, wrap=WORD, 
                           font=("Consolas", 10), bg="#F5F5F5", fg="#333333",
                           relief=FLAT, padx=10, pady=10)
         log_display.pack(fill=BOTH, expand=True, padx=20, pady=(20, 10))
         
         log_display.insert(END, log_text)
-        log_display.config(state=DISABLED) # 设为只读
-        
-        # --- 关键修改结束 ---
+        log_display.config(state=DISABLED) 
 
-        # 创建按钮帧
         btn_frame = Frame(top, bg="#F0F0F0")
-        btn_frame.pack(pady=(0, 20)) # 底部留一点边距
+        btn_frame.pack(pady=(0, 20)) 
 
         def on_confirm():
             top.destroy()
@@ -174,13 +170,10 @@ class SatisfactoryServerController:
         def on_cancel():
             top.destroy()
 
-        # 创建按钮
         btn_update = Button(btn_frame, text="立即更新", command=on_confirm, 
                            bg="#4CAF50", fg="white", width=12, height=2, 
                            font=("Arial", 10, "bold"), relief=RAISED)
         btn_update.pack(side=LEFT, padx=20)
-        
-        # 给“立即更新”按钮一个焦点，方便直接按回车确认
         btn_update.focus_set() 
 
         btn_later = Button(btn_frame, text="稍后再说", command=on_cancel, 
@@ -188,45 +181,35 @@ class SatisfactoryServerController:
                           font=("Arial", 10), relief=RAISED)
         btn_later.pack(side=LEFT, padx=20)
 
-        # 窗口居中逻辑
         top.update_idletasks()
         w = top.winfo_reqwidth()
         h = top.winfo_reqheight()
         x = (screen_width - w) // 2
         y = (screen_height - h) // 2
         top.geometry(f"{w}x{h}+{x}+{y}")
-        
-        # 设置为模态窗口
         top.grab_set()
+
     def start_update_process(self, version):
-        """后台线程：执行完整的更新流程"""
         self.log_message(f">>> 开始更新流程至版本 {version}...")
         self.set_button_state('check_update', DISABLED)
         
         def _run_update():
             try:
-                # 1. 检查并停止服务器
                 if self.server_process and self.server_process.poll() is None:
                     self.log_message("检测到服务器运行中，正在停止...")
                     self.stop_server()
-                    time.sleep(2) # 等待完全停止
+                    time.sleep(2) 
                 
-                # 2. 清理旧临时文件
                 self.cleanup_temp_files()
-                
-                # 3. 下载更新包
                 zip_path = self.download_update_package()
                 if not zip_path:
                     raise Exception("下载更新包失败")
                 
-                # 4. 解压并应用
                 if not self.extract_and_apply_update(zip_path):
                     raise Exception("解压或应用更新失败")
                 
-                # 5. 保存日志
                 self.save_update_log(version, self.latest_changelog)
                 
-                # 6. 重启程序
                 self.log_message("更新成功，准备重启...")
                 self.root.after(0, lambda: messagebox.showinfo("成功", "更新已完成！程序将立即重启。"))
                 self.root.after(1000, self.restart_application)
@@ -246,10 +229,11 @@ class SatisfactoryServerController:
         self.root = Tk()
         self.root.title(f"幸福工厂服务端控制器 - 版本 {LOCAL_VERSION}")
         
-        window_width = 1050
-        window_height = 920
+        # 移除固定大小限制，允许用户调整窗口
+        window_width = 1100
+        window_height = 800
         self.root.geometry(f"{window_width}x{window_height}")
-        self.root.resizable(False, False)
+        self.root.minsize(900, 600) # 设置最小尺寸
         
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -259,12 +243,13 @@ class SatisfactoryServerController:
         
         self.apply_theme()
         
-        main_frame = Frame(self.root, bg=self.themes[self.current_theme]["frame_bg"])
-        main_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
-        self.widgets_to_update.append(('frame', main_frame))
+        # 主容器框架
+        main_frame = Frame(self.root, bg=self.themes[self.current_theme]["bg"])
+        main_frame.pack(fill=BOTH, expand=True, padx=10, pady=5)
         
+        # 顶部工具栏
         top_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        top_frame.pack(fill=X, pady=5)
+        top_frame.pack(fill=X, padx=10, pady=5)
         self.widgets_to_update.append(('frame', top_frame))
         
         version_frame = Frame(top_frame, bg=self.themes[self.current_theme]["frame_bg"])
@@ -313,273 +298,95 @@ class SatisfactoryServerController:
                                    values=list(self.themes.keys()), state="readonly", width=12)
         theme_combo.pack(side=LEFT, padx=(5, 0))
         theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
-        
-        config_frame = LabelFrame(main_frame, text="路径与配置", 
-                                  bg=self.themes[self.current_theme]["frame_bg"], 
-                                  fg=self.themes[self.current_theme]["fg"])
-        config_frame.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('labelframe', config_frame))
-        
-        path_frame = Frame(config_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        path_frame.pack(fill=X, pady=10)
-        self.widgets_to_update.append(('frame', path_frame))
-        
-        Label(path_frame, text="安装根目录:", bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 10, "bold")).pack(anchor=W)
-        
-        help_label = Label(path_frame, text="说明：SteamCMD -> <目录>\\steamcmd, 服务器 -> <目录>\\server, 备份 -> <目录>\\backups", 
-                           bg=self.themes[self.current_theme]["label_bg"], 
-                           fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9), wraplength=900, justify=LEFT)
-        help_label.pack(anchor=W, pady=(5, 10))
-        
-        self.install_path_var = StringVar(value=self.config.get("install_path", ""))
-        Entry(path_frame, textvariable=self.install_path_var, width=60,
-              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-              insertbackground=self.themes[self.current_theme]["entry_fg"]).pack(side=LEFT, fill=X, expand=True)
-        
-        Button(path_frame, text="浏览", command=self.browse_install_path,
-               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=RIGHT, padx=(5,0))
-        
-        archive_frame = LabelFrame(config_frame, text="存档管理与备份策略", 
-                                   bg=self.themes[self.current_theme]["frame_bg"], 
-                                   fg=self.themes[self.current_theme]["fg"])
-        archive_frame.pack(fill=X, pady=10, padx=5)
-        self.widgets_to_update.append(('labelframe', archive_frame))
-        
-        row1 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        row1.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', row1))
-        
-        Label(row1, text="游戏内自动保存数量 (-autosavecount):", 
-              bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"], width=30, anchor='e').pack(side=LEFT, padx=5)
-        
-        self.autosave_count_var = IntVar(value=self.config.get("autosave_count", 5))
-        Spinbox(row1, from_=1, to=50, textvariable=self.autosave_count_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
-        Label(row1, text="(服务器自动删除旧存档，保留最近N个)", 
-              bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
 
-        row2 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        row2.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', row2))
+        # 主内容区分为左右两列
+        content_frame = Frame(main_frame, bg=self.themes[self.current_theme]["bg"])
+        content_frame.pack(fill=BOTH, expand=True, pady=5)
         
-        self.enable_backup_var = BooleanVar(value=self.config.get("enable_auto_backup", True))
-        Checkbutton(row2, text="启用自动备份", variable=self.enable_backup_var,
-                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=5)
+        # 左侧监控面板
+        left_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"], width=300)
+        left_panel.pack(side=LEFT, fill=Y, padx=(0, 5))
+        left_panel.pack_propagate(False)  # 固定宽度
         
-        Label(row2, text="备份间隔 (分钟):", 
-              bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=(15, 5))
+        # 左侧面板标题
+        left_title = Label(left_panel, text="📊 服务器状态监控", 
+                          bg=self.themes[self.current_theme]["label_bg"], 
+                          fg=self.themes[self.current_theme]["label_fg"],
+                          font=("Arial", 10, "bold"), 
+                          pady=5)
+        left_title.pack(fill=X)
+        self.widgets_to_update.append(('label', left_title))
         
-        self.backup_interval_var = IntVar(value=self.config.get("backup_interval", 30))
-        Spinbox(row2, from_=5, to=1440, textvariable=self.backup_interval_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
-
-        row3 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        row3.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', row3))
-        
-        Label(row3, text="保留备份数量:", 
-              bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
-        
-        self.backup_retain_var = IntVar(value=self.config.get("backup_retain", 10))
-        Spinbox(row3, from_=1, to=100, textvariable=self.backup_retain_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
-        
-        Label(row3, text="(自动删除最旧的备份)", 
-              bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
-        
-        btn_group = Frame(row3, bg=self.themes[self.current_theme]["frame_bg"])
-        btn_group.pack(side=RIGHT, padx=10)
-        self.widgets_to_update.append(('frame', btn_group))
-        
-        Button(btn_group, text="立即备份", command=self.manual_backup,
-               bg="#4CAF50", fg="white").pack(side=LEFT, padx=5)
-        
-        Button(btn_group, text="打开备份目录", command=self.open_backup_folder,
-               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=5)
-
-        settings_frame = Frame(config_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        settings_frame.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', settings_frame))
-        
-        Label(settings_frame, text="最大玩家数:", bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(anchor=W)
-        
-        self.max_players_var = IntVar(value=self.config["max_players"])
-        Spinbox(settings_frame, from_=1, to=100, textvariable=self.max_players_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(anchor=W)
-        
-        port_frame = Frame(settings_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        port_frame.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', port_frame))
-        
-        Label(port_frame, text="游戏端口:", bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT)
-        
-        self.game_port_var = IntVar(value=self.config.get("game_port", 7777))
-        Spinbox(port_frame, from_=1, to=65535, textvariable=self.game_port_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=(5,20))
-        
-        Label(port_frame, text="Beacon端口:", bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT)
-        
-        self.beacon_port_var = IntVar(value=self.config.get("beacon_port", 8888))
-        Spinbox(port_frame, from_=1, to=65535, textvariable=self.beacon_port_var, width=10,
-                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=(5,0))
-        
-        self.branch_var = StringVar(value=self.config["branch"])
-        Radiobutton(settings_frame, text="正式版本 (Public)", variable=self.branch_var, value="public", 
-                    bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                    selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(anchor=W)
-        Radiobutton(settings_frame, text="实验版本 (Experimental)", variable=self.branch_var, value="experimental", 
-                    bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                    selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(anchor=W)
-        
-        button_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        button_frame.pack(fill=X, pady=10)
-        self.widgets_to_update.append(('frame', button_frame))
-        
-        btn_configs = [
-            ("install", "一键安装/更新", self.install_server),
-            ("steamcmd", "仅更新 SteamCMD", self.update_steamcmd),
-            ("branch", "切换版本分支", self.switch_branch)
+        # 左侧核心指标网格
+        self.status_labels = {}
+        metrics_data = [
+            ("cpu", "CPU 使用率", "0%", "#2196F3"),
+            ("mem", "内存 使用率", "0%", "#9C27B0"),
+            ("disk_read", "硬盘 读取速度", "0 MB/s", "#4CAF50"),
+            ("disk_write", "硬盘 写入速度", "0 MB/s", "#4CAF50"),
+            ("ping", "网络 延迟", "0 ms", "#FF9800"),
+            ("player", "在线 玩家数", "0/4", "#607D8B"),
+            ("port", "端口 状态", "7777/8888 关闭", "#607D8B")
         ]
-        for key, text, cmd in btn_configs:
-            btn = Button(button_frame, text=text, command=cmd,
-                   bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"])
-            btn.pack(side=LEFT, padx=5)
-            self.widgets_to_update.append(('button', btn))
-            self.action_buttons[key] = btn
         
-        control_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        control_frame.pack(fill=X, pady=10)
-        self.widgets_to_update.append(('frame', control_frame))
+        # 创建左侧监控卡片
+        for i, (key, label_text, default_val, color) in enumerate(metrics_data):
+            card_frame = Frame(left_panel, bg=self.themes[self.current_theme]["frame_bg"], relief=RAISED, borderwidth=1)
+            card_frame.pack(fill=X, padx=5, pady=3, ipady=8)
+            self.widgets_to_update.append(('frame', card_frame))
+            
+            lbl_title = Label(card_frame, text=label_text, 
+                        bg=self.themes[self.current_theme]["label_bg"], 
+                        fg=self.themes[self.current_theme]["label_fg"], 
+                        font=("Arial", 9, "bold"))
+            lbl_title.pack(pady=(3, 0))
+            self.widgets_to_update.append(('label', lbl_title))
+            
+            val_lbl = Label(card_frame, text=default_val, 
+                            bg=self.themes[self.current_theme]["label_bg"], 
+                            fg=color, font=("Arial", 12, "bold"))
+            val_lbl.pack(pady=(3, 5))
+            self.widgets_to_update.append(('label', val_lbl))
+            self.status_labels[key] = val_lbl
+
+        # 备份状态显示
+        backup_status_frame = LabelFrame(left_panel, text="自动备份计划", 
+                                         bg=self.themes[self.current_theme]["frame_bg"], 
+                                         fg=self.themes[self.current_theme]["fg"])
+        backup_status_frame.pack(fill=X, padx=5, pady=10)
+        self.widgets_to_update.append(('labelframe', backup_status_frame))
         
-        self.start_btn = Button(control_frame, text="启动服务器", command=self.start_server,
-                               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"])
-        self.start_btn.pack(side=LEFT, padx=5)
-        
-        self.stop_btn = Button(control_frame, text="停止服务器", command=self.stop_server, state=DISABLED,
-                              bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"])
-        self.stop_btn.pack(side=LEFT, padx=5)
-        
-        self.restart_btn = Button(control_frame, text="重启服务器", command=self.restart_server, state=DISABLED,
-                                 bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"])
-        self.restart_btn.pack(side=LEFT, padx=5)
-        
-        content_split_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        content_split_frame.pack(fill=BOTH, expand=True, pady=5)
-        self.widgets_to_update.append(('frame', content_split_frame))
-        
-        left_panel = Frame(content_split_frame, bg=self.themes[self.current_theme]["frame_bg"], width=280)
-        left_panel.pack(side=LEFT, fill=Y, padx=(0, 10))
-        left_panel.pack_propagate(False)
-        self.widgets_to_update.append(('frame', left_panel))
-        
-        status_frame = LabelFrame(left_panel, text="服务器状态监控", 
-                                  bg=self.themes[self.current_theme]["frame_bg"], 
-                                  fg=self.themes[self.current_theme]["fg"])
-        status_frame.pack(fill=BOTH, expand=True)
-        self.widgets_to_update.append(('labelframe', status_frame))
-        
-        backup_status_frame = Frame(status_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        backup_status_frame.pack(fill=X, padx=5, pady=5)
-        self.widgets_to_update.append(('frame', backup_status_frame))
-        
-        Label(backup_status_frame, text="下次备份:", 
+        Label(backup_status_frame, text="下次备份时间:", 
               bg=self.themes[self.current_theme]["label_bg"], 
-              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9, "bold")).pack(anchor=W)
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(anchor=W, padx=10, pady=5)
         
         self.next_backup_label = Label(backup_status_frame, text="未计划", 
                                        bg=self.themes[self.current_theme]["label_bg"], 
-                                       fg="#FF9800", font=("Arial", 9))
-        self.next_backup_label.pack(anchor=W)
+                                       fg="#FF9800", font=("Arial", 12, "bold"))
+        self.next_backup_label.pack(anchor=W, padx=10, pady=(0, 10))
         self.widgets_to_update.append(('label', self.next_backup_label))
 
-        grid_frame = Frame(status_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        grid_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
-        self.widgets_to_update.append(('frame', grid_frame))
-        
-        self.status_labels = {}
-        metrics = [
-            ("cpu", "CPU:", "0%"),
-            ("mem", "内存:", "0%"),
-            ("disk_read", "硬盘读:", "0 MB/s"),
-            ("disk_write", "硬盘写:", "0 MB/s"),
-            ("ping", "延迟:", "0 ms"),
-            ("player", "玩家:", "0/4"),
-            ("port", "端口:", "7777/8888") 
-        ]
-        
-        for i, (key, label_text, default_val) in enumerate(metrics):
-            f = Frame(grid_frame, bg=self.themes[self.current_theme]["frame_bg"])
-            f.grid(row=i, column=0, sticky='ew', padx=2, pady=2) 
-            self.widgets_to_update.append(('frame', f))
-            
-            lbl = Label(f, text=label_text, bg=self.themes[self.current_theme]["label_bg"], 
-                        fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9), width=6, anchor='e') 
-            lbl.pack(side=LEFT)
-            self.widgets_to_update.append(('label', lbl))
-            
-            val_lbl = Label(f, text=default_val, bg=self.themes[self.current_theme]["label_bg"], 
-                            fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9, "bold"), anchor='w')
-            val_lbl.pack(side=RIGHT, fill=X, expand=True) 
-            self.widgets_to_update.append(('label', val_lbl))
-            self.status_labels[key] = val_lbl
-            
-        right_panel = Frame(content_split_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        # 右侧主内容区 (Notebook 标签页)
+        right_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"])
         right_panel.pack(side=RIGHT, fill=BOTH, expand=True)
-        self.widgets_to_update.append(('frame', right_panel))
         
-        log_frame = LabelFrame(right_panel, text="服务器日志 (调试重点)", 
-                               bg=self.themes[self.current_theme]["frame_bg"], 
-                               fg=self.themes[self.current_theme]["fg"])
-        log_frame.pack(fill=BOTH, expand=True)
-        self.widgets_to_update.append(('labelframe', log_frame))
+        self.notebook = ttk.Notebook(right_panel)
+        self.notebook.pack(fill=BOTH, expand=True)
+        self.widgets_to_update.append(('notebook', self.notebook))
+
+        # 1. 启动与控制界面
+        self.tab_console = Frame(self.notebook, bg=self.themes[self.current_theme]["bg"])
+        self.notebook.add(self.tab_console, text="🚀 启动与控制")
+        self.setup_console_tab()
+
+        # 2. 配置修改界面
+        self.tab_settings = Frame(self.notebook, bg=self.themes[self.current_theme]["bg"])
+        self.notebook.add(self.tab_settings, text="⚙️ 配置管理")
+        self.setup_settings_tab()
         
-        self.status_text = Text(log_frame,
-                                bg=self.themes[self.current_theme]["text_bg"], 
-                                fg=self.themes[self.current_theme]["text_fg"],
-                                font=("Consolas", 9))
-        self.status_text.pack(fill=BOTH, expand=True, padx=5, pady=5)
-        self.widgets_to_update.append(('text', self.status_text))
-        
-        scrollbar = Scrollbar(self.status_text)
-        scrollbar.pack(side=RIGHT, fill=Y)
-        self.status_text.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.status_text.yview)
-        
-        auto_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        auto_frame.pack(fill=X, pady=5)
-        self.widgets_to_update.append(('frame', auto_frame))
-        
-        self.auto_restart_var = BooleanVar(value=self.config["auto_restart"])
-        Checkbutton(auto_frame, text="崩溃自动重启", variable=self.auto_restart_var,
-                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT)
-        
-        self.auto_start_var = BooleanVar(value=self.config["auto_start"])
-        Checkbutton(auto_frame, text="开机自启", variable=self.auto_start_var,
-                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=(20,0))
-        
-        Button(auto_frame, text="保存设置", command=self.save_settings,
-               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=RIGHT)
-        
-        footer_frame = Frame(main_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        footer_frame.pack(fill=X, pady=(10, 0))
+        # --- 底部状态栏 ---
+        footer_frame = Frame(self.root, bg=self.themes[self.current_theme]["frame_bg"])
+        footer_frame.pack(fill=X, pady=(5, 0))
         self.widgets_to_update.append(('frame', footer_frame))
         
         separator = ttk.Separator(footer_frame, orient='horizontal')
@@ -605,6 +412,444 @@ class SatisfactoryServerController:
         self.status_update_thread.start()
         
         self.set_auto_start()
+
+    def setup_console_tab(self):
+        """构建启动与控制标签页"""
+        main_frame = self.tab_console
+        
+        # 控制按钮区域
+        control_frame = Frame(main_frame, bg=self.themes[self.current_theme]["bg"])
+        control_frame.pack(fill=X, pady=15, padx=20)
+        self.widgets_to_update.append(('frame', control_frame))
+        
+        self.start_btn = Button(control_frame, text="▶ 启动服务器", command=self.start_server,
+                               bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=15, height=2)
+        self.start_btn.pack(side=LEFT, padx=10)
+        
+        self.stop_btn = Button(control_frame, text="⏹ 停止服务器", command=self.stop_server, state=DISABLED,
+                              bg="#F44336", fg="white", font=("Arial", 12, "bold"), width=15, height=2)
+        self.stop_btn.pack(side=LEFT, padx=10)
+        
+        self.restart_btn = Button(control_frame, text="🔄 重启服务器", command=self.restart_server, state=DISABLED,
+                                 bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=15, height=2)
+        self.restart_btn.pack(side=LEFT, padx=10)
+
+        # 快捷操作区域
+        quick_actions_frame = Frame(main_frame, bg=self.themes[self.current_theme]["bg"])
+        quick_actions_frame.pack(fill=X, pady=10, padx=20)
+        self.widgets_to_update.append(('frame', quick_actions_frame))
+        
+        Button(quick_actions_frame, text="📦 一键安装/更新", command=self.install_server,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=5)
+        Button(quick_actions_frame, text="🛠 仅更新 SteamCMD", command=self.update_steamcmd,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=5)
+        Button(quick_actions_frame, text=" 切换版本分支", command=self.switch_branch,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=5)
+        Button(quick_actions_frame, text="💾 立即备份", command=self.manual_backup,
+               bg="#2196F3", fg="white").pack(side=RIGHT, padx=5)
+        Button(quick_actions_frame, text="📂 打开备份目录", command=self.open_backup_folder,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=RIGHT, padx=5)
+
+        # 日志区域
+        log_frame = LabelFrame(main_frame, text="📝 服务器实时日志", 
+                               bg=self.themes[self.current_theme]["frame_bg"], 
+                               fg=self.themes[self.current_theme]["fg"],
+                               font=("Arial", 10, "bold"))
+        log_frame.pack(fill=BOTH, expand=True, padx=20, pady=10)
+        self.widgets_to_update.append(('labelframe', log_frame))
+        
+        self.status_text = Text(log_frame,
+                                bg=self.themes[self.current_theme]["text_bg"], 
+                                fg=self.themes[self.current_theme]["text_fg"],
+                                font=("Consolas", 10))
+        self.status_text.pack(fill=BOTH, expand=True, padx=5, pady=5)
+        self.widgets_to_update.append(('text', self.status_text))
+        
+        scrollbar = Scrollbar(self.status_text)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        self.status_text.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.status_text.yview)
+
+    def setup_settings_tab(self):
+        """构建配置管理标签页"""
+        main_frame = self.tab_settings
+        
+        # 使用 Canvas 和 Scrollbar 实现可滚动区域，防止设置过多超出屏幕
+        canvas = Canvas(main_frame, bg=self.themes[self.current_theme]["bg"])
+        scrollbar = Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = Frame(canvas, bg=self.themes[self.current_theme]["bg"])
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        settings_container = Frame(scrollable_frame, bg=self.themes[self.current_theme]["bg"])
+        settings_container.pack(fill=X, padx=20, pady=20)
+        self.widgets_to_update.append(('frame', settings_container))
+
+        # 1. 路径设置
+        path_frame = LabelFrame(settings_container, text="📁 安装路径设置", 
+                                  bg=self.themes[self.current_theme]["frame_bg"], 
+                                  fg=self.themes[self.current_theme]["fg"])
+        path_frame.pack(fill=X, pady=10)
+        self.widgets_to_update.append(('labelframe', path_frame))
+        
+        inner_path_frame = Frame(path_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        inner_path_frame.pack(fill=X, pady=10, padx=10)
+        self.widgets_to_update.append(('frame', inner_path_frame))
+        
+        Label(inner_path_frame, text="安装根目录:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 10, "bold"), width=15, anchor='e').pack(side=LEFT, padx=5)
+        
+        help_label = Label(inner_path_frame, text="说明：SteamCMD -> <目录>\\steamcmd, 服务器 -> <目录>\\server, 备份 -> <目录>\\backups", 
+                           bg=self.themes[self.current_theme]["label_bg"], 
+                           fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9), wraplength=800, justify=LEFT)
+        help_label.pack(anchor=W, pady=(5, 10), padx=5)
+        
+        self.install_path_var = StringVar(value=self.config.get("install_path", ""))
+        Entry(inner_path_frame, textvariable=self.install_path_var, width=60,
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"]).pack(side=LEFT, fill=X, expand=True, padx=5)
+        
+        Button(inner_path_frame, text="浏览", command=self.browse_install_path,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=RIGHT, padx=5)
+
+        # 2. 监控设置
+        monitor_frame = LabelFrame(settings_container, text="📡 监控与网络设置", 
+                                  bg=self.themes[self.current_theme]["frame_bg"], 
+                                  fg=self.themes[self.current_theme]["fg"])
+        monitor_frame.pack(fill=X, pady=10)
+        self.widgets_to_update.append(('labelframe', monitor_frame))
+        
+        inner_monitor_frame = Frame(monitor_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        inner_monitor_frame.pack(fill=X, pady=10, padx=10)
+        self.widgets_to_update.append(('frame', inner_monitor_frame))
+        
+        Label(inner_monitor_frame, text="监控主机地址:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 10, "bold"), width=15, anchor='e').pack(side=LEFT, padx=5)
+        
+        help_monitor_label = Label(inner_monitor_frame, text="用于延迟检测和端口状态监控 (支持IP、域名、动态域名)", 
+                           bg=self.themes[self.current_theme]["label_bg"], 
+                           fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9))
+        help_monitor_label.pack(side=LEFT, padx=5)
+
+        self.monitor_host_var = StringVar(value=self.config.get("monitor_host", "localhost"))
+        Entry(inner_monitor_frame, textvariable=self.monitor_host_var, width=40,
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"]).pack(side=LEFT, padx=5)
+        
+        Label(inner_monitor_frame, text="(默认: localhost)", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 8)).pack(side=LEFT)
+
+        # 3. 存档与备份策略
+        archive_frame = LabelFrame(settings_container, text="💾 存档管理与备份策略", 
+                                   bg=self.themes[self.current_theme]["frame_bg"], 
+                                   fg=self.themes[self.current_theme]["fg"])
+        archive_frame.pack(fill=X, pady=10)
+        self.widgets_to_update.append(('labelframe', archive_frame))
+        
+        row1 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        row1.pack(fill=X, pady=5, padx=10)
+        self.widgets_to_update.append(('frame', row1))
+        
+        Label(row1, text="游戏内自动保存数量:", 
+              bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], width=20, anchor='e').pack(side=LEFT, padx=5)
+        
+        self.autosave_count_var = IntVar(value=self.config.get("autosave_count", 5))
+        Spinbox(row1, from_=1, to=50, textvariable=self.autosave_count_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+        Label(row1, text="(服务器自动删除旧存档，保留最近N个)", 
+              bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+
+        row2 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        row2.pack(fill=X, pady=5, padx=10)
+        self.widgets_to_update.append(('frame', row2))
+        
+        self.enable_backup_var = BooleanVar(value=self.config.get("enable_auto_backup", True))
+        Checkbutton(row2, text="启用自动备份", variable=self.enable_backup_var,
+                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=5)
+        
+        Label(row2, text="备份间隔 (分钟):", 
+              bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=(15, 5))
+        
+        self.backup_interval_var = IntVar(value=self.config.get("backup_interval", 30))
+        Spinbox(row2, from_=5, to=1440, textvariable=self.backup_interval_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+
+        row3 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        row3.pack(fill=X, pady=5, padx=10)
+        self.widgets_to_update.append(('frame', row3))
+        
+        Label(row3, text="保留备份数量:", 
+              bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
+        
+        self.backup_retain_var = IntVar(value=self.config.get("backup_retain", 10))
+        Spinbox(row3, from_=1, to=100, textvariable=self.backup_retain_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+        
+        Label(row3, text="(自动删除最旧的备份)", 
+              bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
+
+        # 添加备份位置配置
+        backup_locations_frame = LabelFrame(archive_frame, text="📍 备份位置设置", 
+                                            bg=self.themes[self.current_theme]["frame_bg"], 
+                                            fg=self.themes[self.current_theme]["fg"])
+        backup_locations_frame.pack(fill=X, pady=10, padx=10)
+        self.widgets_to_update.append(('labelframe', backup_locations_frame))
+        
+        self.backup_locations_listbox = Listbox(backup_locations_frame, height=4)
+        self.backup_locations_listbox.pack(fill=X, padx=5, pady=5)
+        
+        location_btn_frame = Frame(backup_locations_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        location_btn_frame.pack(fill=X, padx=5, pady=5)
+        
+        Button(location_btn_frame, text="添加备份位置", command=self.add_backup_location,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=2)
+        Button(location_btn_frame, text="编辑备份位置", command=self.edit_selected_backup_location,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=2)
+        Button(location_btn_frame, text="删除备份位置", command=self.delete_selected_backup_location,
+               bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(side=LEFT, padx=2)
+        
+        self.refresh_backup_locations_display()
+
+        # 4. 服务器参数设置
+        settings_params_frame = LabelFrame(settings_container, text="⚙️ 服务器参数设置", 
+                                   bg=self.themes[self.current_theme]["frame_bg"], 
+                                   fg=self.themes[self.current_theme]["fg"])
+        settings_params_frame.pack(fill=X, pady=10)
+        self.widgets_to_update.append(('labelframe', settings_params_frame))
+        
+        inner_settings_frame = Frame(settings_params_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        inner_settings_frame.pack(fill=X, pady=5, padx=10)
+        self.widgets_to_update.append(('frame', inner_settings_frame))
+        
+        Label(inner_settings_frame, text="最大玩家数:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
+        
+        self.max_players_var = IntVar(value=self.config["max_players"])
+        Spinbox(inner_settings_frame, from_=1, to=100, textvariable=self.max_players_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+        
+        port_frame = Frame(inner_settings_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        port_frame.pack(fill=X, pady=5, padx=5)
+        self.widgets_to_update.append(('frame', port_frame))
+        
+        Label(port_frame, text="游戏端口:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=5)
+        
+        self.game_port_var = IntVar(value=self.config.get("game_port", 7777))
+        Spinbox(port_frame, from_=1, to=65535, textvariable=self.game_port_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+        
+        Label(port_frame, text="Beacon端口:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"]).pack(side=LEFT, padx=(20, 5))
+        
+        self.beacon_port_var = IntVar(value=self.config.get("beacon_port", 8888))
+        Spinbox(port_frame, from_=1, to=65535, textvariable=self.beacon_port_var, width=10,
+                bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+                buttonbackground=self.themes[self.current_theme]["button_bg"]).pack(side=LEFT, padx=5)
+        
+        branch_frame = Frame(inner_settings_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        branch_frame.pack(fill=X, pady=5, padx=5)
+        self.widgets_to_update.append(('frame', branch_frame))
+        
+        self.branch_var = StringVar(value=self.config["branch"])
+        Radiobutton(branch_frame, text="正式版本 (Public)", variable=self.branch_var, value="public", 
+                    bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                    selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=5)
+        Radiobutton(branch_frame, text="实验版本 (Experimental)", variable=self.branch_var, value="experimental", 
+                    bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                    selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=5)
+
+        # 5. 自动化设置
+        auto_frame = LabelFrame(settings_container, text="🤖 自动化设置", 
+                                   bg=self.themes[self.current_theme]["frame_bg"], 
+                                   fg=self.themes[self.current_theme]["fg"])
+        auto_frame.pack(fill=X, pady=10)
+        self.widgets_to_update.append(('labelframe', auto_frame))
+        
+        inner_auto_frame = Frame(auto_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        inner_auto_frame.pack(fill=X, pady=10, padx=10)
+        self.widgets_to_update.append(('frame', inner_auto_frame))
+        
+        self.auto_restart_var = BooleanVar(value=self.config["auto_restart"])
+        Checkbutton(inner_auto_frame, text="崩溃自动重启", variable=self.auto_restart_var,
+                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=10)
+        
+        self.auto_start_var = BooleanVar(value=self.config["auto_start"])
+        Checkbutton(inner_auto_frame, text="开机自启", variable=self.auto_start_var,
+                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                   selectcolor=self.themes[self.current_theme]["highlight_bg"]).pack(side=LEFT, padx=10)
+        
+        Button(inner_auto_frame, text="💾 保存所有设置", command=self.save_settings,
+               bg="#4CAF50", fg="white", font=("Arial", 10, "bold")).pack(side=RIGHT, padx=10)
+
+    def refresh_backup_locations_display(self):
+        self.backup_locations_listbox.delete(0, END)
+        for loc in self.config.get("backup_locations", []):
+            status = "✓" if loc.get("enabled", True) else "✗"
+            display_text = f"{status} {loc['type'].upper()}: {loc.get('path', loc.get('address', ''))}"
+            self.backup_locations_listbox.insert(END, display_text)
+
+    def add_backup_location(self):
+        self.open_backup_location_dialog()
+
+    def edit_selected_backup_location(self):
+        selection = self.backup_locations_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个备份位置进行编辑")
+            return
+        
+        index = selection[0]
+        locations = self.config.get("backup_locations", [])
+        if index < len(locations):
+            self.open_backup_location_dialog(locations[index], index)
+
+    def delete_selected_backup_location(self):
+        selection = self.backup_locations_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个备份位置进行删除")
+            return
+        
+        index = selection[0]
+        locations = self.config.get("backup_locations", [])
+        if index < len(locations):
+            del locations[index]
+            self.config["backup_locations"] = locations
+            self.refresh_backup_locations_display()
+
+    def open_backup_location_dialog(self, location=None, index=None):
+        dialog = Toplevel(self.root)
+        dialog.title("备份位置设置" if location is None else "编辑备份位置")
+        dialog.geometry("400x350")
+        
+        x = int((self.root.winfo_screenwidth() / 2) - 200)
+        y = int((self.root.winfo_screenheight() / 2) - 175)
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        type_frame = Frame(dialog)
+        type_frame.pack(fill=X, pady=10, padx=10)
+        
+        Label(type_frame, text="备份类型:").pack(anchor=W)
+        type_var = StringVar(value=location.get("type", "local") if location else "local")
+        type_combo = ttk.Combobox(type_frame, textvariable=type_var, 
+                                  values=["local", "network", "webdav", "ftp", "sftp"], 
+                                  state="readonly", width=20)
+        type_combo.pack(side=LEFT, pady=5)
+        
+        path_frame = Frame(dialog)
+        path_frame.pack(fill=X, pady=5, padx=10)
+        
+        Label(path_frame, text="路径/地址:").pack(anchor=W)
+        path_var = StringVar(value=location.get("path", "") if location and "path" in location else "")
+        address_var = StringVar(value=location.get("address", "") if location and "address" in location else "")
+        username_var = StringVar(value=location.get("username", "") if location else "")
+        password_var = StringVar(value=location.get("password", "") if location else "")
+        
+        def update_fields(*args):
+            for widget in path_frame.winfo_children()[2:]:
+                widget.destroy()
+            
+            current_type = type_var.get()
+            if current_type == "local":
+                path_entry = Entry(path_frame, textvariable=path_var, width=50)
+                path_entry.pack(fill=X, pady=5)
+                Button(path_frame, text="浏览", command=lambda: self.browse_path(path_var)).pack(side=RIGHT, padx=5)
+            elif current_type == "network":
+                path_entry = Entry(path_frame, textvariable=path_var, width=50)
+                path_entry.pack(fill=X, pady=5)
+            elif current_type == "webdav":
+                url_entry = Entry(path_frame, textvariable=address_var, width=50)
+                url_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="用户名:").pack(anchor=W)
+                username_entry = Entry(path_frame, textvariable=username_var, width=50)
+                username_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="密码:").pack(anchor=W)
+                password_entry = Entry(path_frame, textvariable=password_var, width=50, show="*")
+                password_entry.pack(fill=X, pady=5)
+            elif current_type == "ftp":
+                url_entry = Entry(path_frame, textvariable=address_var, width=50)
+                url_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="用户名:").pack(anchor=W)
+                username_entry = Entry(path_frame, textvariable=username_var, width=50)
+                username_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="密码:").pack(anchor=W)
+                password_entry = Entry(path_frame, textvariable=password_var, width=50, show="*")
+                password_entry.pack(fill=X, pady=5)
+            elif current_type == "sftp":
+                url_entry = Entry(path_frame, textvariable=address_var, width=50)
+                url_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="用户名:").pack(anchor=W)
+                username_entry = Entry(path_frame, textvariable=username_var, width=50)
+                username_entry.pack(fill=X, pady=5)
+                Label(path_frame, text="密码:").pack(anchor=W)
+                password_entry = Entry(path_frame, textvariable=password_var, width=50, show="*")
+                password_entry.pack(fill=X, pady=5)
+        
+        type_combo.bind("<<ComboboxSelected>>", update_fields)
+        update_fields()
+        
+        enabled_var = BooleanVar(value=location.get("enabled", True) if location else True)
+        enabled_check = Checkbutton(dialog, text="启用此备份位置", variable=enabled_var)
+        enabled_check.pack(pady=5)
+        
+        btn_frame = Frame(dialog)
+        btn_frame.pack(fill=X, pady=20, padx=10)
+        
+        def save_location():
+            new_location = {
+                "type": type_var.get(),
+                "enabled": enabled_var.get()
+            }
+            
+            if type_var.get() == "local":
+                new_location["path"] = path_var.get()
+            elif type_var.get() == "network":
+                new_location["path"] = path_var.get()
+            elif type_var.get() in ["webdav", "ftp", "sftp"]:
+                new_location["address"] = address_var.get()
+                new_location["username"] = username_var.get()
+                new_location["password"] = password_var.get()
+            
+            locations = self.config.get("backup_locations", [])
+            if index is not None and index < len(locations):
+                locations[index] = new_location
+            else:
+                locations.append(new_location)
+            
+            self.config["backup_locations"] = locations
+            self.refresh_backup_locations_display()
+            dialog.destroy()
+        
+        Button(btn_frame, text="保存", command=save_location, bg="#4CAF50", fg="white").pack(side=LEFT, padx=5)
+        Button(btn_frame, text="取消", command=dialog.destroy, bg="#F44336", fg="white").pack(side=RIGHT, padx=5)
+
+    def browse_path(self, var):
+        path = filedialog.askdirectory()
+        if path:
+            var.set(path)
 
     def show_local_history(self):
         if not os.path.exists(LOCAL_HISTORY_FILE):
@@ -653,6 +898,13 @@ class SatisfactoryServerController:
     def apply_theme(self):
         theme = self.themes[self.current_theme]
         self.root.configure(bg=theme["bg"])
+        
+        # 特殊处理 Notebook 样式
+        style = ttk.Style()
+        style.configure("TNotebook", background=theme["notebook_bg"])
+        style.configure("TNotebook.Tab", background=theme["frame_bg"], foreground=theme["fg"])
+        style.map("TNotebook.Tab", background=[("selected", theme["bg"])])
+        
         for widget_type, widget in self.widgets_to_update:
             if widget_type == 'button':
                 widget.configure(bg=theme["button_bg"], fg=theme["button_fg"])
@@ -676,6 +928,9 @@ class SatisfactoryServerController:
             elif widget_type == 'spinbox':
                 widget.configure(bg=theme["entry_bg"], fg=theme["entry_fg"], buttonbackground=theme["button_bg"])
             elif widget_type == 'separator':
+                pass
+            elif widget_type == 'notebook':
+                # Notebook 的背景色通过 style 设置，这里不需要额外操作
                 pass
 
     def change_theme(self, event=None):
@@ -703,7 +958,8 @@ class SatisfactoryServerController:
             "autosave_count": self.autosave_count_var.get(),
             "backup_interval": self.backup_interval_var.get(),
             "backup_retain": self.backup_retain_var.get(),
-            "enable_auto_backup": self.enable_backup_var.get()
+            "enable_auto_backup": self.enable_backup_var.get(),
+            "monitor_host": self.monitor_host_var.get()
         })
         self.save_config()
         self.set_auto_start()
@@ -799,6 +1055,8 @@ class SatisfactoryServerController:
             
             self.cleanup_old_backups(backup_dir)
             
+            self.sync_backup_to_locations(zip_path)
+            
             if self.enable_backup_var.get() and self.server_process and self.server_process.poll() is None:
                 interval = self.backup_interval_var.get()
                 self.next_backup_time = datetime.now() + timedelta(minutes=interval)
@@ -811,6 +1069,84 @@ class SatisfactoryServerController:
             self.log_message(f"❌ 备份失败：{str(e)}")
             if source_reason == "ManualButton":
                 self.root.after(0, lambda: messagebox.showerror("错误", f"备份失败：{str(e)}"))
+
+    def sync_backup_to_locations(self, local_backup_path):
+        locations = self.config.get("backup_locations", [])
+        filename = os.path.basename(local_backup_path)
+        
+        for loc in locations:
+            if not loc.get("enabled", True):
+                continue
+                
+            try:
+                if loc["type"] == "local":
+                    dest_path = os.path.join(loc["path"], filename)
+                    shutil.copy2(local_backup_path, dest_path)
+                    self.log_message(f"✅ 本地备份同步成功：{dest_path}")
+                    
+                elif loc["type"] == "network":
+                    dest_path = os.path.join(loc["path"], filename)
+                    shutil.copy2(local_backup_path, dest_path)
+                    self.log_message(f"✅ 网络备份同步成功：{dest_path}")
+                    
+                elif loc["type"] == "webdav":
+                    self.upload_to_webdav(loc, local_backup_path, filename)
+                    
+                elif loc["type"] == "ftp":
+                    self.upload_via_ftp(loc, local_backup_path, filename)
+                    
+                elif loc["type"] == "sftp":
+                    self.upload_via_sftp(loc, local_backup_path, filename)
+                    
+            except Exception as e:
+                self.log_message(f"❌ 同步到 {loc['type']} 失败：{str(e)}")
+
+    def upload_to_webdav(self, loc, local_path, filename):
+        import requests
+        from requests.auth import HTTPBasicAuth
+        
+        url = f"{loc['address']}/{filename}"
+        auth = HTTPBasicAuth(loc["username"], loc["password"])
+        
+        with open(local_path, 'rb') as f:
+            response = requests.put(url, data=f, auth=auth)
+            
+        if response.status_code in [200, 201, 204]:
+            self.log_message(f"✅ WebDAV备份同步成功：{url}")
+        else:
+            raise Exception(f"WebDAV上传失败：{response.status_code}")
+
+    def upload_via_ftp(self, loc, local_path, filename):
+        parsed_url = urlparse(loc["address"])
+        hostname = parsed_url.hostname or loc["address"]
+        port = parsed_url.port or 21
+        
+        ftp = ftplib.FTP()
+        ftp.connect(hostname, port)
+        ftp.login(loc["username"], loc["password"])
+        
+        with open(local_path, 'rb') as f:
+            ftp.storbinary(f'STOR {filename}', f)
+        
+        ftp.quit()
+        self.log_message(f"✅ FTP备份同步成功：{hostname}")
+
+    def upload_via_sftp(self, loc, local_path, filename):
+        import paramiko
+        
+        parsed_url = urlparse(loc["address"])
+        hostname = parsed_url.hostname or loc["address"]
+        port = parsed_url.port or 22
+        
+        transport = paramiko.Transport((hostname, port))
+        transport.connect(username=loc["username"], password=loc["password"])
+        
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        sftp.put(local_path, f"/{filename}")
+        
+        sftp.close()
+        transport.close()
+        self.log_message(f"✅ SFTP备份同步成功：{hostname}")
 
     def cleanup_old_backups(self, backup_dir):
         try:
@@ -1343,13 +1679,14 @@ class SatisfactoryServerController:
         self.start_server()
         
     def check_port_status(self):
+        host = self.config.get("monitor_host", "localhost")
         ports = [(self.game_port_var.get(), "G"), (self.beacon_port_var.get(), "B")]
         active_ports = []
         for port, name in ports:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(1)
-                result = sock.connect_ex(('localhost', port))
+                result = sock.connect_ex((host, port))
                 sock.close()
                 if result == 0: active_ports.append(f"{port}({name})")
             except: pass
@@ -1362,7 +1699,12 @@ class SatisfactoryServerController:
             return status_str
         return f"{g}/{b} 关闭"
     
-    def get_ping_time(self, host='localhost', port=7777):
+    def get_ping_time(self, host=None, port=None):
+        if host is None:
+            host = self.config.get("monitor_host", "localhost")
+        if port is None:
+            port = self.game_port_var.get()
+            
         try:
             start_time = time.time()
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1417,7 +1759,11 @@ class SatisfactoryServerController:
                     self.ping_value = self.get_ping_time('localhost', self.game_port_var.get())
                     self.player_count = self.get_player_count()
                 else:
-                    self.ping_value = 0
+                    monitor_host = self.config.get("monitor_host", "localhost")
+                    if monitor_host != "localhost":
+                         self.ping_value = self.get_ping_time(monitor_host, self.game_port_var.get())
+                    else:
+                         self.ping_value = 0
                     self.player_count = 0
                 
                 time.sleep(2)
