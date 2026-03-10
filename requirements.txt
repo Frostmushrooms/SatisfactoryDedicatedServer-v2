@@ -1,0 +1,11 @@
+# 核心运行依赖（必须安装）
+psutil>=5.9.0          # 系统监控（CPU/内存/磁盘IO/进程管理）
+requests>=2.31.0       # 网络请求（版本检查/下载更新包）
+
+# 可选依赖（仅打包EXE时需要）
+pyinstaller>=6.0.0     # 将Python代码打包成Windows EXE文件
+
+# 备注：
+# 1. tkinter 是Python内置库（3.6+默认自带），无需手动安装
+# 2. 其他os/sys/threading等均为Python内置库，无需安装
+# 3. 建议使用Python 3.8~3.11版本运行/打包
