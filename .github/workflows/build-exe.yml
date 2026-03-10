@@ -2,8 +2,8 @@
 name: Build Satisfactory Server Manager to EXE
 
 # 触发条件：
-# 1. 手动触发（方便测试）
-# 2. 推送v开头的标签（如v0.1.4，规范发布版本）
+# 1. 手动触发（测试用）
+# 2. 推送v开头的标签（正式发布用）
 on:
   workflow_dispatch:
   push:
@@ -21,12 +21,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2：设置Python环境（适配你的代码，建议3.10）
+      # 步骤2：设置Python环境（3.10兼容性最佳）
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # 缓存依赖，加速后续构建
+          cache: 'pip' # 缓存依赖，加速构建
 
       # 步骤3：安装项目依赖
       - name: Install dependencies
@@ -34,35 +34,46 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 步骤4：用PyInstaller打包EXE（核心步骤，适配你的GUI程序）
+      # 步骤4：用PyInstaller打包EXE（适配GUI程序）
       - name: Build EXE with PyInstaller
         run: |
           pyinstaller -F -w --name "幸福工厂服务器管理器" --noupx satisfactory_controller.py
           # 参数说明：
-          # -F：打包成单个EXE文件（方便分发）
-          # -w：隐藏控制台窗口（GUI程序必备，避免运行时弹出黑窗口）
-          # --name：指定EXE文件名
-          # --noupx：禁用UPX压缩（避免部分杀毒软件误报）
+          # -F：单文件EXE（方便分发）
+          # -w：隐藏控制台（GUI程序必备）
+          # --name：自定义EXE文件名
+          # --noupx：禁用压缩，避免杀毒软件误报
 
-      # 步骤5：验证打包结果
-      - name: Check build result
-        run: |
-          dir dist\
-          # 输出dist目录内容，确认EXE文件生成
+      # 步骤5：上传EXE为工作流产物（手动触发时可直接下载）
+      - name: Upload EXE as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 幸福工厂服务器管理器-EXE
+          path: dist/*.exe
+          retention-days: 30 # 产物保留30天
 
-      # 步骤6：创建Release并上传EXE
-      - name: Create Release and Upload EXE
+      # 步骤6：创建Release并上传EXE（仅打标签时执行）
+      - name: Create Release and Upload EXE (only on tag)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          # 上传dist目录下的所有文件（主要是EXE）
+          # 上传dist目录下的EXE文件
           files: |
             dist/*.exe
           # 自动生成Release说明
           body: |
-            ## 幸福工厂服务器管理器自动构建版本
-            - 基于Python 3.10 + PyInstaller打包
-            - 包含功能：服务器安装/启停/备份/监控/自动更新
-            - 运行环境：Windows 7/10/11（64位）
+            ## 幸福工厂服务器管理器 v${{ github.ref_name }}
+            ### 自动构建信息
+            - Python版本：3.10
+            - 打包工具：PyInstaller
+            - 构建环境：Windows Server 2022
+            ### 核心功能
+            ✅ 服务器一键安装/更新（SteamCMD）
+            ✅ 服务器启停/重启/端口配置
+            ✅ 自动备份存档+清理旧备份
+            ✅ 实时监控CPU/内存/磁盘IO/延迟
+            ✅ 管理器自动更新+主题切换
+          # 自动生成版本标题
+          name: Release v${{ github.ref_name }}
         env:
-          # GitHub自动提供的Token，无需手动配置
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
