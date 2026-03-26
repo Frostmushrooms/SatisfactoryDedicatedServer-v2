@@ -31,7 +31,7 @@ jobs:
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 幸福工厂服务器管理器-EXE
+          name: ServerManager-EXE
           path: dist/*.exe
           retention-days: 30
 
@@ -42,14 +42,10 @@ jobs:
           files: dist/*.exe
           name: Release ${{ github.ref_name }}
           body: |
-            ## 幸福工厂服务器管理器 ${{ github.ref_name }}
-            ### 更新内容
-            ✅ 恢复自定义服务器网络监控设置功能
-            ✅ 修复自动备份问题
-            ✅ 修复停止服务器时仍在运行问题
-            ✅ 新增版本更新提示
-            ✅ 修复steamcmd更新失败
-            ✅ 优化日志滚动体验
-            ✅ 新增定时开关服务器
+            ## Satisfactory Server Manager ${{ github.ref_name }}
+            ### Build Info
+            - Python: 3.10
+            - Tool: PyInstaller
+            - OS: Windows Server 2022
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
