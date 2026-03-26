@@ -17,7 +17,7 @@ import ftplib
 from urllib.parse import urlparse
 
 # 版本更新相关配置
-LOCAL_VERSION = "0.1.8"
+LOCAL_VERSION = "v0.1.9"
 REMOTE_VERSION_URL = "http://nas.sxtvip.top:5050/version.json"
 REMOTE_CHANGELOG_URL = "http://nas.sxtvip.top:5050/changelog.json"
 REMOTE_PACKAGE_URL = "http://nas.sxtvip.top:5050/幸福工厂服务器管理器.zip"
@@ -97,6 +97,14 @@ class SatisfactoryServerController:
         self.qq_api_thread = None
         self.api_stop_event = threading.Event()
         
+        # 代理服务器配置
+        self.proxy_enabled = self.config.get("proxy_enabled", False)
+        self.proxy_type = self.config.get("proxy_type", "HTTP")
+        self.proxy_host = self.config.get("proxy_host", "")
+        self.proxy_port = self.config.get("proxy_port", "")
+        self.proxy_username = self.config.get("proxy_username", "")
+        self.proxy_password = self.config.get("proxy_password", "")
+        
         self.setup_gui()
         self.check_update_on_start()
         self.load_local_history()
@@ -126,14 +134,19 @@ class SatisfactoryServerController:
                 "qq_api_enabled": False,
                 "qq_bot_token": "",
                 "qq_bot_id": "",
-                "qq_group_id": ""
+                "qq_group_id": "",
+                "proxy_enabled": False,
+                "proxy_type": "HTTP",
+                "proxy_host": "",
+                "proxy_port": "",
+                "proxy_username": "",
+                "proxy_password": ""
             }
             self.save_config()
             
     def save_config(self):
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=4)
-
     def load_local_history(self):
         if os.path.exists(LOCAL_HISTORY_FILE):
             try:
@@ -143,7 +156,6 @@ class SatisfactoryServerController:
                     if len(lines) > 2:
                         self.log_message("📜 检测到本地更新历史")
             except: pass
-
     def save_update_log(self, version, log_content):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry = f"=== 版本 {version} 更新于 {timestamp} ===\n{log_content}\n\n"
@@ -152,7 +164,6 @@ class SatisfactoryServerController:
                 f.write(entry)
         except Exception as e:
             self.log_message(f"保存更新日志失败：{e}")
-
     def show_changelog_window(self, version, log_text):
         top = Toplevel(self.root)
         top.title(f"版本 {version} 更新日志")
@@ -170,28 +181,22 @@ class SatisfactoryServerController:
         log_display.pack(fill=BOTH, expand=True, padx=20, pady=(20, 10))
         log_display.insert(END, log_text)
         log_display.config(state=DISABLED) 
-
         btn_frame = Frame(top, bg="#F0F0F0")
         btn_frame.pack(pady=(0, 20)) 
-
         def on_confirm():
             top.destroy()
             self.root.after(100, lambda: self.start_update_process(version))
-
         def on_cancel():
             top.destroy()
-
         btn_update = Button(btn_frame, text="立即更新", command=on_confirm, 
                            bg="#4CAF50", fg="white", width=10, height=1, 
                            font=("Arial", 10, "bold"), relief=RAISED)
         btn_update.pack(side=LEFT, padx=10)
         btn_update.focus_set() 
-
         btn_later = Button(btn_frame, text="稍后再说", command=on_cancel, 
                           bg="#E0E0E0", fg="black", width=10, height=1, 
                           font=("Arial", 10), relief=RAISED)
         btn_later.pack(side=LEFT, padx=10)
-
         top.update_idletasks()
         w = top.winfo_reqwidth()
         h = top.winfo_reqheight()
@@ -199,7 +204,6 @@ class SatisfactoryServerController:
         y = (screen_height - h) // 2
         top.geometry(f"{w}x{h}+{x}+{y}")
         top.grab_set()
-
     def start_update_process(self, version):
         self.log_message(f">>> 开始更新流程至版本 {version}...")
         self.set_button_state('check_update', DISABLED)
@@ -232,18 +236,85 @@ class SatisfactoryServerController:
                 self.set_button_state('check_update', NORMAL)
             finally:
                 self.cleanup_temp_files()
-
         thread = threading.Thread(target=_run_update, daemon=True)
         thread.start()
-
+    
+    def get_proxy_config(self):
+        """获取当前代理配置"""
+        if self.proxy_enabled:
+            proxy_url = f"{self.proxy_type.lower()}://"
+            if self.proxy_username and self.proxy_password:
+                proxy_url += f"{self.proxy_username}:{self.proxy_password}@"
+            proxy_url += f"{self.proxy_host}:{self.proxy_port}"
+            return {
+                "http": proxy_url,
+                "https": proxy_url
+            }
+        return None
+    
+    def test_network_connection(self):
+        """测试网络连接"""
+        def _test():
+            try:
+                self.log_message("🔍 正在测试网络连接...")
+                
+                # 获取代理配置
+                proxies = self.get_proxy_config() if self.proxy_enabled else None
+                
+                # 测试基础连接
+                self.log_message("🌐 测试基础网络连接...")
+                response = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=10)
+                if response.status_code == 200:
+                    self.log_message("✅ 基础网络连接正常")
+                else:
+                    self.log_message("❌ 基础网络连接异常")
+                    return
+                
+                # 测试远程版本服务器连接
+                self.log_message("🌐 测试远程版本服务器连接...")
+                response = requests.get(REMOTE_VERSION_URL, proxies=proxies, timeout=10)
+                if response.status_code == 200:
+                    self.log_message("✅ 远程版本服务器连接正常")
+                else:
+                    self.log_message("❌ 远程版本服务器连接异常")
+                    return
+                
+                # 测试SteamCMD下载链接
+                self.log_message("🌐 测试SteamCMD下载链接...")
+                response = requests.head(STEAMCMD_DOWNLOAD_URL, proxies=proxies, timeout=10)
+                if response.status_code in [200, 302]:
+                    self.log_message("✅ SteamCMD下载链接可达")
+                else:
+                    self.log_message("❌ SteamCMD下载链接不可达")
+                    return
+                
+                self.root.after(0, lambda: messagebox.showinfo("网络测试", "网络连接测试成功！"))
+                self.log_message("🎉 网络连接测试全部通过")
+                
+            except requests.exceptions.ProxyError:
+                self.root.after(0, lambda: messagebox.showerror("网络测试", "代理服务器连接失败，请检查代理配置"))
+                self.log_message("❌ 代理服务器连接失败")
+            except requests.exceptions.ConnectionError:
+                self.root.after(0, lambda: messagebox.showerror("网络测试", "网络连接失败，请检查网络配置"))
+                self.log_message("❌ 网络连接失败")
+            except requests.exceptions.Timeout:
+                self.root.after(0, lambda: messagebox.showerror("网络测试", "网络连接超时，请检查网络配置"))
+                self.log_message("❌ 网络连接超时")
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("网络测试", f"网络测试出错：{str(e)}"))
+                self.log_message(f"❌ 网络测试出错：{str(e)}")
+        
+        thread = threading.Thread(target=_test, daemon=True)
+        thread.start()
+    
     def setup_gui(self):
         self.root = Tk()
         self.root.title(f"幸福工厂服务端控制器 - 版本 {LOCAL_VERSION}")
         
-        window_width = 1000
+        window_width = 1600
         window_height = 750
         self.root.geometry(f"{window_width}x{window_height}")
-        self.root.minsize(850, 600)
+        self.root.minsize(1600, 600)  # 降低最小宽度要求
         
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
@@ -290,6 +361,13 @@ class SatisfactoryServerController:
         history_btn.pack(side=LEFT, padx=2)
         self.widgets_to_update.append(('button', history_btn))
         
+        # 网络测试按钮
+        network_test_btn = Button(version_frame, text="网络测试", command=self.test_network_connection,
+                                  bg=self.themes[self.current_theme]["button_bg"],
+                                  fg=self.themes[self.current_theme]["button_fg"], font=("Arial", 9))
+        network_test_btn.pack(side=LEFT, padx=2)
+        self.widgets_to_update.append(('button', network_test_btn))
+        
         theme_frame = Frame(top_frame, bg=self.themes[self.current_theme]["frame_bg"])
         theme_frame.pack(side=RIGHT)
         self.widgets_to_update.append(('frame', theme_frame))
@@ -305,13 +383,12 @@ class SatisfactoryServerController:
                                    values=list(self.themes.keys()), state="readonly", width=10)
         theme_combo.pack(side=LEFT, padx=(5, 0))
         theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
-
         # 主内容区
         content_frame = Frame(main_frame, bg=self.themes[self.current_theme]["bg"])
         content_frame.pack(fill=BOTH, expand=True, pady=5)
         
         # --- 左侧监控面板 ---
-        left_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"], width=260)
+        left_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"], width=220)
         left_panel.pack(side=LEFT, fill=Y, padx=(0, 5))
         left_panel.pack_propagate(False)
         
@@ -351,7 +428,6 @@ class SatisfactoryServerController:
             val_lbl.pack(pady=(2, 4))
             self.widgets_to_update.append(('label', val_lbl))
             self.status_labels[key] = val_lbl
-
         backup_status_frame = LabelFrame(left_panel, text="自动备份", 
                                          bg=self.themes[self.current_theme]["frame_bg"], 
                                          fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
@@ -367,45 +443,51 @@ class SatisfactoryServerController:
                                        fg="#FF9800", font=("Arial", 10, "bold"))
         self.next_backup_label.pack(anchor=W, padx=10, pady=(0, 8))
         self.widgets_to_update.append(('label', self.next_backup_label))
-
         # --- 中间控制和配置区域 ---
         middle_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"])
         middle_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 5))
         
+        # 创建主画布和滚动条
         self.canvas = Canvas(middle_panel, bg=self.themes[self.current_theme]["bg"], highlightthickness=0)
         self.scrollbar = Scrollbar(middle_panel, orient="vertical", command=self.canvas.yview)
         
+        # 创建滚动框架
         self.scrollable_frame = Frame(self.canvas, bg=self.themes[self.current_theme]["bg"])
         
+        # 将滚动框架绑定到画布
         self.scrollable_frame.bind(
             "<Configure>",
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
         
+        # 将滚动框架添加到画布
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
+        # 绑定鼠标滚轮事件
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width))
         
+        # 当画布大小改变时调整滚动框架宽度
+        def _configure_canvas(event):
+            canvas_width = event.width
+            self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+        self.canvas.bind("<Configure>", _configure_canvas)
+        
+        # 布局画布和滚动条
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
         
+        # 设置主要内容
         self.setup_main_tab(self.scrollable_frame)
-
         # --- 右侧日志区域 ---
-        right_panel = PanedWindow(content_frame, orient=VERTICAL, bg=self.themes[self.current_theme]["bg"], sashrelief=RAISED, sashwidth=5)
-        right_panel.pack(side=RIGHT, fill=Y, padx=(0, 0))
+        right_panel = Frame(content_frame, bg=self.themes[self.current_theme]["bg"])
+        right_panel.pack(side=RIGHT, fill=Y, padx=(0, 0), expand=False)
         
         log_frame = LabelFrame(right_panel, text="📝 实时日志", 
                                bg=self.themes[self.current_theme]["frame_bg"], 
                                fg=self.themes[self.current_theme]["fg"], font=("Arial", 10, "bold"))
         log_frame.pack(fill=BOTH, expand=True, padx=5, pady=5)
         self.widgets_to_update.append(('labelframe', log_frame))
-        
-        # 创建一个PanedWindow来允许调整日志区域宽度
-        log_paned = PanedWindow(right_panel, orient=HORIZONTAL, bg=self.themes[self.current_theme]["bg"], sashrelief=RAISED, sashwidth=5)
-        log_paned.pack(fill=BOTH, expand=True)
         
         # 日志文本区域
         self.status_text = Text(log_frame, height=20,
@@ -415,6 +497,7 @@ class SatisfactoryServerController:
         self.status_text.pack(fill=BOTH, expand=True, padx=5, pady=5)
         self.widgets_to_update.append(('text', self.status_text))
         
+        # 滚动条
         scrollbar_y = Scrollbar(log_frame, orient=VERTICAL, command=self.status_text.yview)
         scrollbar_y.pack(side=RIGHT, fill=Y)
         self.status_text.config(yscrollcommand=scrollbar_y.set)
@@ -422,7 +505,6 @@ class SatisfactoryServerController:
         scrollbar_x = Scrollbar(log_frame, orient=HORIZONTAL, command=self.status_text.xview)
         scrollbar_x.pack(side=BOTTOM, fill=X)
         self.status_text.config(xscrollcommand=scrollbar_x.set)
-
         # --- 底部状态栏 ---
         footer_frame = Frame(self.root, bg=self.themes[self.current_theme]["frame_bg"])
         footer_frame.pack(fill=X, pady=(5, 0))
@@ -442,7 +524,6 @@ class SatisfactoryServerController:
         self.author_label.bind("<Button-1>", self.copy_qq_group)
         self.author_label.bind("<Enter>", lambda e: self.author_label.config(fg="#0078D7"))
         self.author_label.bind("<Leave>", lambda e: self.apply_theme()) 
-
         self.monitor_thread = threading.Thread(target=self.monitor_server, daemon=True)
         self.monitor_thread.start()
         
@@ -450,15 +531,15 @@ class SatisfactoryServerController:
         self.status_update_thread.start()
         
         self.set_auto_start()
-
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-
+        # 只在主窗口可见时处理滚动
+        if self.canvas.winfo_viewable():
+            self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
     def setup_main_tab(self, parent_frame):
         main_container = Frame(parent_frame, bg=self.themes[self.current_theme]["bg"])
-        main_container.pack(fill='x', padx=15, pady=15)
+        main_container.pack(fill='x', padx=10, pady=10)
         self.widgets_to_update.append(('frame', main_container))
-
+        
         # 1. 控制按钮区域
         control_frame = LabelFrame(main_container, text="🚀 服务器控制", 
                                    bg=self.themes[self.current_theme]["frame_bg"], 
@@ -470,7 +551,7 @@ class SatisfactoryServerController:
         btn_frame.pack(fill='x', pady=8, padx=10)
         self.widgets_to_update.append(('frame', btn_frame))
         
-        # 减小按钮尺寸：移除 height，减小 width，使用 padx 控制间距
+        # 主控制按钮
         self.start_btn = Button(btn_frame, text="▶ 启动", command=self.start_server,
                                bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), width=10)
         self.start_btn.pack(side=LEFT, padx=5)
@@ -482,8 +563,8 @@ class SatisfactoryServerController:
         self.restart_btn = Button(btn_frame, text="🔄 重启", command=self.restart_server, state=DISABLED,
                                  bg="#FF9800", fg="white", font=("Arial", 10, "bold"), width=10)
         self.restart_btn.pack(side=LEFT, padx=5)
-
-        # 2. 快捷操作区域 (包含新增的删除按钮)
+        
+        # 快捷操作区域
         quick_actions_frame = Frame(control_frame, bg=self.themes[self.current_theme]["frame_bg"])
         quick_actions_frame.pack(fill='x', pady=8, padx=10)
         self.widgets_to_update.append(('frame', quick_actions_frame))
@@ -509,8 +590,16 @@ class SatisfactoryServerController:
         # 新增：彻底删除服务器按钮
         Button(quick_actions_frame, text="🗑️ 彻底删除服务器", command=self.delete_server_confirm,
                bg="#D32F2F", fg="white", **small_btn_opts).pack(side=RIGHT, padx=15)
-
-        # 3. 服务器参数设置
+        
+        # 保存设置按钮
+        save_frame = Frame(control_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        save_frame.pack(fill='x', pady=8, padx=10)
+        self.widgets_to_update.append(('frame', save_frame))
+        
+        Button(save_frame, text="💾 保存设置", command=self.save_settings,
+               bg="#4CAF50", fg="white", font=("Arial", 9, "bold"), padx=10, pady=3).pack(side=RIGHT)
+        
+        # 2. 服务器参数设置
         settings_params_frame = LabelFrame(main_container, text="⚙️ 服务器参数", 
                                    bg=self.themes[self.current_theme]["frame_bg"], 
                                    fg=self.themes[self.current_theme]["fg"], font=("Arial", 10, "bold"))
@@ -521,6 +610,7 @@ class SatisfactoryServerController:
         inner_settings_frame.pack(fill='x', pady=3, padx=5)
         self.widgets_to_update.append(('frame', inner_settings_frame))
         
+        # 最大玩家设置
         Label(inner_settings_frame, text="最大玩家:", bg=self.themes[self.current_theme]["label_bg"], 
               fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
         
@@ -529,6 +619,7 @@ class SatisfactoryServerController:
                 bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
                 buttonbackground=self.themes[self.current_theme]["button_bg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
         
+        # 游戏端口设置
         port_frame = Frame(inner_settings_frame, bg=self.themes[self.current_theme]["frame_bg"])
         port_frame.pack(fill='x', pady=3, padx=5)
         self.widgets_to_update.append(('frame', port_frame))
@@ -549,6 +640,7 @@ class SatisfactoryServerController:
                 bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
                 buttonbackground=self.themes[self.current_theme]["button_bg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
         
+        # 分支选择
         branch_frame = Frame(inner_settings_frame, bg=self.themes[self.current_theme]["frame_bg"])
         branch_frame.pack(fill='x', pady=3, padx=5)
         self.widgets_to_update.append(('frame', branch_frame))
@@ -560,20 +652,47 @@ class SatisfactoryServerController:
         Radiobutton(branch_frame, text="实验版 (Experimental)", variable=self.branch_var, value="experimental", 
                     bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
                     selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
-
-        # 4. 配置管理区域
+        
+        # 自动化设置区域
+        automation_frame = LabelFrame(settings_params_frame, text="🤖 自动化设置", 
+                                      bg=self.themes[self.current_theme]["frame_bg"], 
+                                      fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
+        automation_frame.pack(fill='x', pady=8)
+        self.widgets_to_update.append(('labelframe', automation_frame))
+        
+        # 在自动化设置框架内创建两个复选框
+        automation_inner_frame = Frame(automation_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        automation_inner_frame.pack(fill='x', pady=5, padx=5)
+        self.widgets_to_update.append(('frame', automation_inner_frame))
+        
+        # 崩溃自动重启选项
+        self.auto_restart_var = BooleanVar(value=self.config["auto_restart"])
+        auto_restart_cb = Checkbutton(automation_inner_frame, text="崩溃自动重启", variable=self.auto_restart_var,
+                                     bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                                     selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9))
+        auto_restart_cb.pack(side=LEFT, padx=5)
+        self.widgets_to_update.append(('checkbutton', auto_restart_cb))
+        
+        # 开机自启选项
+        self.auto_start_var = BooleanVar(value=self.config["auto_start"])
+        auto_start_cb = Checkbutton(automation_inner_frame, text="开机自启", variable=self.auto_start_var,
+                                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
+                                   selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9))
+        auto_start_cb.pack(side=LEFT, padx=20)
+        self.widgets_to_update.append(('checkbutton', auto_start_cb))
+        
+        # 3. 配置管理区域
         config_frame = LabelFrame(main_container, text="⚙️ 配置管理", 
                                   bg=self.themes[self.current_theme]["frame_bg"], 
                                   fg=self.themes[self.current_theme]["fg"], font=("Arial", 10, "bold"))
         config_frame.pack(fill='x', pady=8)
         self.widgets_to_update.append(('labelframe', config_frame))
-
+        
         config_container = Frame(config_frame, bg=self.themes[self.current_theme]["frame_bg"])
         config_container.pack(fill='x', padx=10, pady=10)
         self.widgets_to_update.append(('frame', config_container))
-
-        # --- 配置项子模块 (保持原有逻辑，仅微调布局) ---
-        # 1. 路径设置
+        
+        # 路径设置
         path_frame = LabelFrame(config_container, text="📁 安装路径", 
                                   bg=self.themes[self.current_theme]["frame_bg"], 
                                   fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
@@ -593,14 +712,15 @@ class SatisfactoryServerController:
         help_label.pack(anchor=W, pady=(2, 2), padx=5)
         
         self.install_path_var = StringVar(value=self.config.get("install_path", ""))
-        Entry(inner_path_frame, textvariable=self.install_path_var, width=50,
+        path_entry = Entry(inner_path_frame, textvariable=self.install_path_var, width=50,
               bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
-              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9)).pack(side=LEFT, fill='x', expand=True, padx=5)
+              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9))
+        path_entry.pack(side=LEFT, fill='x', expand=True, padx=5)
         
         Button(inner_path_frame, text="浏览", command=self.browse_install_path,
                bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"], font=("Arial", 8), padx=5).pack(side=RIGHT, padx=5)
-
-        # 2. 监控设置
+        
+        # 监控设置
         monitor_frame = LabelFrame(config_container, text="📡 网络监控", 
                                   bg=self.themes[self.current_theme]["frame_bg"], 
                                   fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
@@ -621,8 +741,8 @@ class SatisfactoryServerController:
         
         Label(inner_monitor_frame, text="(默认 localhost)", bg=self.themes[self.current_theme]["label_bg"], 
               fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 8)).pack(side=LEFT)
-
-        # 3. 存档与备份策略
+        
+        # 存档与备份策略
         archive_frame = LabelFrame(config_container, text="💾 备份策略", 
                                    bg=self.themes[self.current_theme]["frame_bg"], 
                                    fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
@@ -644,7 +764,7 @@ class SatisfactoryServerController:
         Label(row1, text="(保留最近 N 个)", 
               bg=self.themes[self.current_theme]["label_bg"], 
               fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 8)).pack(side=LEFT, padx=5)
-
+        
         row2 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
         row2.pack(fill='x', pady=3, padx=5)
         self.widgets_to_update.append(('frame', row2))
@@ -662,7 +782,7 @@ class SatisfactoryServerController:
         Spinbox(row2, from_=5, to=1440, textvariable=self.backup_interval_var, width=8,
                 bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
                 buttonbackground=self.themes[self.current_theme]["button_bg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
-
+        
         row3 = Frame(archive_frame, bg=self.themes[self.current_theme]["frame_bg"])
         row3.pack(fill='x', pady=3, padx=5)
         self.widgets_to_update.append(('frame', row3))
@@ -679,7 +799,7 @@ class SatisfactoryServerController:
         Label(row3, text="(自动删旧)", 
               bg=self.themes[self.current_theme]["label_bg"], 
               fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 8)).pack(side=LEFT, padx=5)
-
+        
         backup_locations_frame = LabelFrame(archive_frame, text="📍 备份位置", 
                                             bg=self.themes[self.current_theme]["frame_bg"], 
                                             fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
@@ -701,36 +821,103 @@ class SatisfactoryServerController:
                bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"], **btn_small_opts).pack(side=LEFT, padx=2)
         
         self.refresh_backup_locations_display()
-
-        # 5. 自动化设置
-        auto_frame = LabelFrame(config_container, text="🤖 自动化", 
+        
+        # 代理服务器和QQ机器人设置 - 改为垂直堆叠
+        config_bottom_frame = Frame(config_container, bg=self.themes[self.current_theme]["frame_bg"])
+        config_bottom_frame.pack(fill='x', pady=5)
+        self.widgets_to_update.append(('frame', config_bottom_frame))
+        
+        # 代理服务器设置
+        proxy_frame = LabelFrame(config_bottom_frame, text="🌐 代理服务器", 
                                    bg=self.themes[self.current_theme]["frame_bg"], 
                                    fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
-        auto_frame.pack(fill='x', pady=5)
-        self.widgets_to_update.append(('labelframe', auto_frame))
+        proxy_frame.pack(fill='x', pady=2)
+        self.widgets_to_update.append(('labelframe', proxy_frame))
         
-        inner_auto_frame = Frame(auto_frame, bg=self.themes[self.current_theme]["frame_bg"])
-        inner_auto_frame.pack(fill='x', pady=5, padx=5)
-        self.widgets_to_update.append(('frame', inner_auto_frame))
+        inner_proxy_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        inner_proxy_frame.pack(fill='x', pady=5, padx=5)
+        self.widgets_to_update.append(('frame', inner_proxy_frame))
         
-        self.auto_restart_var = BooleanVar(value=self.config["auto_restart"])
-        Checkbutton(inner_auto_frame, text="崩溃自动重启", variable=self.auto_restart_var,
+        self.proxy_enabled_var = BooleanVar(value=self.config.get("proxy_enabled", False))
+        Checkbutton(inner_proxy_frame, text="启用代理服务器", variable=self.proxy_enabled_var,
                    bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                   selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9)).pack(side=LEFT, padx=10)
+                   selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9)).pack(anchor=W, padx=5)
         
-        self.auto_start_var = BooleanVar(value=self.config["auto_start"])
-        Checkbutton(inner_auto_frame, text="开机自启", variable=self.auto_start_var,
-                   bg=self.themes[self.current_theme]["frame_bg"], fg=self.themes[self.current_theme]["fg"],
-                   selectcolor=self.themes[self.current_theme]["highlight_bg"], font=("Arial", 9)).pack(side=LEFT, padx=10)
+        # 代理服务器配置行
+        type_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        type_frame.pack(fill='x', pady=3, padx=5)
+        self.widgets_to_update.append(('frame', type_frame))
         
-        Button(inner_auto_frame, text="💾 保存设置", command=self.save_settings,
-               bg="#4CAF50", fg="white", font=("Arial", 9, "bold"), padx=10, pady=3).pack(side=RIGHT, padx=10)
-
-        # 6. QQ机器人设置
-        qq_frame = LabelFrame(config_container, text="💬 QQ机器人", 
+        Label(type_frame, text="代理类型:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.proxy_type_var = StringVar(value=self.config.get("proxy_type", "HTTP"))
+        proxy_type_combo = ttk.Combobox(type_frame, textvariable=self.proxy_type_var, 
+                                        values=["HTTP", "HTTPS", "SOCKS4", "SOCKS5"], state="readonly", width=15)
+        proxy_type_combo.pack(side=LEFT, padx=5)
+        
+        host_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        host_frame.pack(fill='x', pady=3, padx=5)
+        self.widgets_to_update.append(('frame', host_frame))
+        
+        Label(host_frame, text="代理主机:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.proxy_host_var = StringVar(value=self.config.get("proxy_host", ""))
+        Entry(host_frame, textvariable=self.proxy_host_var, width=20,
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        port_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        port_frame.pack(fill='x', pady=3, padx=5)
+        self.widgets_to_update.append(('frame', port_frame))
+        
+        Label(port_frame, text="代理端口:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.proxy_port_var = StringVar(value=self.config.get("proxy_port", ""))
+        Entry(port_frame, textvariable=self.proxy_port_var, width=20,
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        # 认证信息
+        auth_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        auth_frame.pack(fill='x', pady=3, padx=5)
+        self.widgets_to_update.append(('frame', auth_frame))
+        
+        Label(auth_frame, text="用户名:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.proxy_username_var = StringVar(value=self.config.get("proxy_username", ""))
+        Entry(auth_frame, textvariable=self.proxy_username_var, width=20,
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        password_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        password_frame.pack(fill='x', pady=3, padx=5)
+        self.widgets_to_update.append(('frame', password_frame))
+        
+        Label(password_frame, text="密码:", bg=self.themes[self.current_theme]["label_bg"], 
+              fg=self.themes[self.current_theme]["label_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.proxy_password_var = StringVar(value=self.config.get("proxy_password", ""))
+        Entry(password_frame, textvariable=self.proxy_password_var, width=20, show="*",
+              bg=self.themes[self.current_theme]["entry_bg"], fg=self.themes[self.current_theme]["entry_fg"],
+              insertbackground=self.themes[self.current_theme]["entry_fg"], font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        # 测试代理连接按钮
+        test_proxy_frame = Frame(proxy_frame, bg=self.themes[self.current_theme]["frame_bg"])
+        test_proxy_frame.pack(fill='x', pady=5, padx=5)
+        self.widgets_to_update.append(('frame', test_proxy_frame))
+        
+        Button(test_proxy_frame, text="测试代理连接", command=self.test_proxy_connection,
+               bg="#2196F3", fg="white", font=("Arial", 9, "bold")).pack(side=LEFT, padx=5)
+        
+        # QQ机器人设置
+        qq_frame = LabelFrame(config_bottom_frame, text="💬 QQ机器人", 
                                    bg=self.themes[self.current_theme]["frame_bg"], 
                                    fg=self.themes[self.current_theme]["fg"], font=("Arial", 9, "bold"))
-        qq_frame.pack(fill='x', pady=5)
+        qq_frame.pack(fill='x', pady=2)
         self.widgets_to_update.append(('labelframe', qq_frame))
         
         inner_qq_frame = Frame(qq_frame, bg=self.themes[self.current_theme]["frame_bg"])
@@ -793,7 +980,65 @@ class SatisfactoryServerController:
                                     fg="#FF9800", font=("Arial", 9))
         self.qq_status_label.pack(side=LEFT, padx=(10, 0))
         self.widgets_to_update.append(('label', self.qq_status_label))
-
+    # 代理服务器测试功能
+    def test_proxy_connection(self):
+        """测试代理服务器连接"""
+        def _test():
+            try:
+                if not self.proxy_enabled_var.get():
+                    self.root.after(0, lambda: messagebox.showwarning("测试", "请先启用代理服务器"))
+                    return
+                
+                # 构建代理URL
+                proxy_type = self.proxy_type_var.get().lower()
+                proxy_host = self.proxy_host_var.get()
+                proxy_port = self.proxy_port_var.get()
+                proxy_username = self.proxy_username_var.get()
+                proxy_password = self.proxy_password_var.get()
+                
+                if not proxy_host or not proxy_port:
+                    self.root.after(0, lambda: messagebox.showerror("测试", "请输入代理主机和端口"))
+                    return
+                
+                proxy_url = f"{proxy_type}://"
+                if proxy_username and proxy_password:
+                    proxy_url += f"{proxy_username}:{proxy_password}@"
+                proxy_url += f"{proxy_host}:{proxy_port}"
+                
+                proxies = {
+                    "http": proxy_url,
+                    "https": proxy_url
+                }
+                
+                self.log_message(f"🔍 测试代理连接: {proxy_url}")
+                
+                # 测试连接
+                response = requests.get("http://httpbin.org/ip", proxies=proxies, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    ip = data.get("origin", "未知")
+                    self.log_message(f"✅ 代理连接成功，当前IP: {ip}")
+                    self.root.after(0, lambda: messagebox.showinfo("测试成功", f"代理连接成功！\n当前IP: {ip}"))
+                else:
+                    self.log_message("❌ 代理连接失败")
+                    self.root.after(0, lambda: messagebox.showerror("测试失败", "代理连接失败"))
+                    
+            except requests.exceptions.ProxyError:
+                self.log_message("❌ 代理服务器连接失败")
+                self.root.after(0, lambda: messagebox.showerror("测试失败", "代理服务器连接失败，请检查配置"))
+            except requests.exceptions.ConnectionError:
+                self.log_message("❌ 网络连接失败")
+                self.root.after(0, lambda: messagebox.showerror("测试失败", "网络连接失败，请检查代理服务器"))
+            except requests.exceptions.Timeout:
+                self.log_message("❌ 连接超时")
+                self.root.after(0, lambda: messagebox.showerror("测试失败", "连接超时，请检查代理服务器"))
+            except Exception as e:
+                self.log_message(f"❌ 代理测试出错：{str(e)}")
+                self.root.after(0, lambda: messagebox.showerror("测试失败", f"代理测试出错：{str(e)}"))
+        
+        thread = threading.Thread(target=_test, daemon=True)
+        thread.start()
+    
     # QQ机器人API核心功能
     def toggle_qq_bot(self):
         if not self.qq_api_enabled:
@@ -805,12 +1050,10 @@ class SatisfactoryServerController:
         else:
             # 停止QQ机器人
             self.stop_qq_bot()
-
     def validate_qq_config(self):
         return (self.qq_bot_token_var.get() and 
                 self.qq_bot_id_var.get() and 
                 self.qq_group_id_var.get())
-
     def start_qq_bot(self):
         if self.qq_api_thread and self.qq_api_thread.is_alive():
             return
@@ -822,7 +1065,6 @@ class SatisfactoryServerController:
         self.qq_start_btn.config(text="停止QQ机器人", bg="#F44336")
         self.qq_status_label.config(text="状态：运行中", fg="#4CAF50")
         self.log_message("✅ QQ机器人已启动")
-
     def stop_qq_bot(self):
         self.qq_api_enabled = False
         self.api_stop_event.set()
@@ -831,7 +1073,6 @@ class SatisfactoryServerController:
         self.qq_start_btn.config(text="启动QQ机器人", bg="#2196F3")
         self.qq_status_label.config(text="状态：已停止", fg="#FF9800")
         self.log_message("🛑 QQ机器人已停止")
-
     def run_qq_bot(self):
         """模拟QQ机器人API轮询逻辑"""
         self.log_message("🤖 QQ机器人服务线程启动")
@@ -844,7 +1085,7 @@ class SatisfactoryServerController:
                     
                 # 模拟收到消息
                 message = f"测试消息：服务器状态 - CPU: {self.cpu_usage}%, 内存: {self.memory_usage}%"
-                self.log_message(f"💬 QQ机器人收到消息: {message}")
+                self.log_message(f"💬 QQ机器人收到消息：{message}")
                 
                 # 解析内容并发送回复
                 reply = self.process_qq_message(message)
@@ -852,11 +1093,10 @@ class SatisfactoryServerController:
                     self.send_qq_message(reply)
                     
             except Exception as e:
-                self.log_message(f"❌ QQ机器人运行出错: {e}")
+                self.log_message(f"❌ QQ机器人运行出错：{e}")
                 time.sleep(10)  # 出错后等待10秒再继续
                 
         self.log_message("🤖 QQ机器人服务线程结束")
-
     def process_qq_message(self, message):
         """解析QQ消息内容并返回回复"""
         message_lower = message.lower()
@@ -887,18 +1127,16 @@ class SatisfactoryServerController:
         
         else:
             return "🤖 未识别的命令，请发送'帮助'查看可用命令"
-
     def send_qq_message(self, message):
         """发送QQ消息"""
-        self.log_message(f"📤 发送QQ消息: {message}")
+        self.log_message(f"📤 发送QQ消息：{message}")
         # 这里应该是实际的API调用，这里只是模拟
         try:
             # 模拟API调用
             time.sleep(0.5)
             self.log_message("✅ QQ消息发送成功")
         except Exception as e:
-            self.log_message(f"❌ 发送QQ消息失败: {e}")
-
+            self.log_message(f"❌ 发送QQ消息失败：{e}")
     # ... (其余方法保持不变，但需包含 delete_server_confirm 方法) ...
     
     def delete_server_confirm(self):
@@ -911,7 +1149,6 @@ class SatisfactoryServerController:
         if not os.path.exists(root_path):
             messagebox.showwarning("提示", "设定的安装目录不存在！")
             return
-
         confirm_msg = f"⚠️ 高危操作警告 ⚠️\n\n您确定要彻底删除整个服务器吗？\n\n目标目录：{root_path}\n\n这将删除:\n- SteamCMD 文件\n- 服务器所有文件\n- 所有本地备份存档\n\n此操作不可逆！请确保您已备份重要存档。"
         
         if messagebox.askyesno("确认删除", confirm_msg, icon='warning'):
@@ -919,7 +1156,6 @@ class SatisfactoryServerController:
             final_confirm = messagebox.askyesno("最终确认", "再次确认：真的要删除所有数据吗？", icon='warning')
             if final_confirm:
                 self._execute_delete_server(root_path)
-
     def _execute_delete_server(self, root_path):
         """执行删除逻辑"""
         self.log_message(">>> 开始执行服务器彻底删除流程...")
@@ -960,17 +1196,14 @@ class SatisfactoryServerController:
                 self.root.after(0, lambda: messagebox.showerror("错误", err_msg))
             finally:
                 self.set_button_state('check_update', NORMAL)
-
         thread = threading.Thread(target=_run_delete, daemon=True)
         thread.start()
-
     def refresh_backup_locations_display(self):
         self.backup_locations_listbox.delete(0, END)
         for loc in self.config.get("backup_locations", []):
             status = "✓" if loc.get("enabled", True) else "✗"
             display_text = f"{status} {loc['type'].upper()}: {loc.get('path', loc.get('address', ''))}"
             self.backup_locations_listbox.insert(END, display_text)
-
     def add_backup_location(self): self.open_backup_location_dialog()
     def edit_selected_backup_location(self):
         selection = self.backup_locations_listbox.curselection()
@@ -987,7 +1220,6 @@ class SatisfactoryServerController:
             del locations[index]
             self.config["backup_locations"] = locations
             self.refresh_backup_locations_display()
-
     def open_backup_location_dialog(self, location=None, index=None):
         dialog = Toplevel(self.root)
         dialog.title("备份位置设置" if location is None else "编辑备份位置")
@@ -1052,11 +1284,9 @@ class SatisfactoryServerController:
             dialog.destroy()
         Button(btn_frame, text="保存", command=save_location, bg="#4CAF50", fg="white").pack(side=LEFT, padx=5)
         Button(btn_frame, text="取消", command=dialog.destroy, bg="#F44336", fg="white").pack(side=RIGHT, padx=5)
-
     def browse_path(self, var):
         path = filedialog.askdirectory()
         if path: var.set(path)
-
     def show_local_history(self):
         if not os.path.exists(LOCAL_HISTORY_FILE):
             messagebox.showinfo("提示", "暂无本地更新历史记录。"); return
@@ -1072,14 +1302,11 @@ class SatisfactoryServerController:
             text_area.insert(END, content); text_area.config(state=DISABLED)
             Button(top, text="关闭", command=top.destroy, bg=self.themes[self.current_theme]["button_bg"], fg=self.themes[self.current_theme]["button_fg"]).pack(pady=10)
         except Exception as e: messagebox.showerror("错误", f"读取历史文件失败：{str(e)}")
-
     def copy_qq_group(self, event=None):
         qq_group = "264127585"; self.root.clipboard_clear(); self.root.clipboard_append(qq_group); self.root.update()
         messagebox.showinfo("复制成功", f"QQ 群号 {qq_group} 已复制到剪贴板！")
-
     def set_button_state(self, key, state):
         if key in self.action_buttons: self.action_buttons[key].config(state=state)
-
     def apply_theme(self):
         theme = self.themes[self.current_theme]
         self.root.configure(bg=theme["bg"])
@@ -1099,7 +1326,6 @@ class SatisfactoryServerController:
             elif widget_type == 'checkbutton': widget.configure(bg=theme["frame_bg"], fg=theme["fg"], selectcolor=theme["highlight_bg"])
             elif widget_type == 'radiobutton': widget.configure(bg=theme["frame_bg"], fg=theme["fg"], selectcolor=theme["highlight_bg"])
             elif widget_type == 'spinbox': widget.configure(bg=theme["entry_bg"], fg=theme["entry_fg"], buttonbackground=theme["button_bg"])
-
     def change_theme(self, event=None):
         new_theme = self.theme_var.get()
         if new_theme in self.themes:
@@ -1121,7 +1347,13 @@ class SatisfactoryServerController:
             "qq_api_enabled": self.qq_enabled_var.get(),
             "qq_bot_token": self.qq_bot_token_var.get(),
             "qq_bot_id": self.qq_bot_id_var.get(),
-            "qq_group_id": self.qq_group_id_var.get()
+            "qq_group_id": self.qq_group_id_var.get(),
+            "proxy_enabled": self.proxy_enabled_var.get(),
+            "proxy_type": self.proxy_type_var.get(),
+            "proxy_host": self.proxy_host_var.get(),
+            "proxy_port": self.proxy_port_var.get(),
+            "proxy_username": self.proxy_username_var.get(),
+            "proxy_password": self.proxy_password_var.get()
         })
         self.save_config(); self.set_auto_start()
         if self.server_process and self.server_process.poll() is None:
@@ -1144,7 +1376,6 @@ class SatisfactoryServerController:
         if threading.current_thread() is threading.main_thread():
             self.status_text.insert(END, full_msg); self.status_text.see(END); self.status_text.update_idletasks()
         else: self.root.after(0, lambda: self._insert_log(full_msg))
-
     def _insert_log(self, msg):
         self.status_text.insert(END, msg); self.status_text.see(END); self.status_text.update_idletasks()
         
@@ -1154,7 +1385,6 @@ class SatisfactoryServerController:
         steamcmd_dir = os.path.join(root, "steamcmd"); server_dir = os.path.join(root, "server")
         steamcmd_exe = os.path.join(steamcmd_dir, "steamcmd.exe"); backup_dir = os.path.join(root, "backups")
         return steamcmd_dir, server_dir, steamcmd_exe, backup_dir
-
     def perform_backup(self, source_reason="手动"):
         _, server_dir, _, backup_dir = self.get_paths()
         if not server_dir or not os.path.exists(server_dir):
@@ -1191,7 +1421,6 @@ class SatisfactoryServerController:
         except Exception as e:
             self.log_message(f"❌ 备份失败：{str(e)}")
             if source_reason == "ManualButton": self.root.after(0, lambda: messagebox.showerror("错误", f"备份失败：{str(e)}"))
-
     def sync_backup_to_locations(self, local_backup_path):
         locations = self.config.get("backup_locations", []); filename = os.path.basename(local_backup_path)
         for loc in locations:
@@ -1207,27 +1436,24 @@ class SatisfactoryServerController:
                 elif loc["type"] == "ftp": self.upload_via_ftp(loc, local_backup_path, filename)
                 elif loc["type"] == "sftp": self.upload_via_sftp(loc, local_backup_path, filename)
             except Exception as e: self.log_message(f"❌ 同步到 {loc['type']} 失败：{str(e)}")
-
     def upload_to_webdav(self, loc, local_path, filename):
         import requests; from requests.auth import HTTPBasicAuth
         url = f"{loc['address']}/{filename}"; auth = HTTPBasicAuth(loc["username"], loc["password"])
         with open(local_path, 'rb') as f: response = requests.put(url, data=f, auth=auth)
         if response.status_code in [200, 201, 204]: self.log_message(f"✅ WebDAV 备份同步成功：{url}")
         else: raise Exception(f"WebDAV 上传失败：{response.status_code}")
-
     def upload_via_ftp(self, loc, local_path, filename):
+        import ftplib; from urllib.parse import urlparse
         parsed_url = urlparse(loc["address"]); hostname = parsed_url.hostname or loc["address"]; port = parsed_url.port or 21
         ftp = ftplib.FTP(); ftp.connect(hostname, port); ftp.login(loc["username"], loc["password"])
         with open(local_path, 'rb') as f: ftp.storbinary(f'STOR {filename}', f)
         ftp.quit(); self.log_message(f"✅ FTP 备份同步成功：{hostname}")
-
     def upload_via_sftp(self, loc, local_path, filename):
         import paramiko
         parsed_url = urlparse(loc["address"]); hostname = parsed_url.hostname or loc["address"]; port = parsed_url.port or 22
         transport = paramiko.Transport((hostname, port)); transport.connect(username=loc["username"], password=loc["password"])
         sftp = paramiko.SFTPClient.from_transport(transport); sftp.put(local_path, f"/{filename}")
         sftp.close(); transport.close(); self.log_message(f"✅ SFTP 备份同步成功：{hostname}")
-
     def cleanup_old_backups(self, backup_dir):
         try:
             retain_count = self.backup_retain_var.get()
@@ -1236,14 +1462,12 @@ class SatisfactoryServerController:
             files.sort(); files_to_delete = files[:-retain_count]
             for f in files_to_delete: os.remove(os.path.join(backup_dir, f)); self.log_message(f"🗑️ 已删除旧备份：{f}")
         except Exception as e: self.log_message(f"清理旧备份时出错：{e}")
-
     def manual_backup(self): self.perform_backup(source_reason="ManualButton")
     def open_backup_folder(self):
         _, _, _, backup_dir = self.get_paths()
         if not backup_dir: messagebox.showerror("错误", "请先设置安装根目录"); return
         if not os.path.exists(backup_dir): os.makedirs(backup_dir)
         os.startfile(backup_dir)
-
     def check_backup_schedule(self):
         if not self.enable_backup_var.get(): return
         if not self.server_process or self.server_process.poll() is not None: return
@@ -1252,14 +1476,12 @@ class SatisfactoryServerController:
             self.next_backup_time = datetime.now() + timedelta(minutes=interval)
             self.update_backup_timer_label(); return
         if datetime.now() >= self.next_backup_time: self.perform_backup(source_reason="自动定时")
-
     def update_backup_timer_label(self):
         if not self.enable_backup_var.get() or self.next_backup_time is None: txt = "未计划"; col = "#888888"
         else: txt = self.next_backup_time.strftime("%H:%M:%S"); col = "#FF9800"
         def _update(): self.next_backup_label.config(text=txt, fg=col)
         if threading.current_thread() is threading.main_thread(): _update()
         else: self.root.after(0, _update)
-
     def install_server(self):
         steamcmd_dir, server_dir, steamcmd_exe, _ = self.get_paths()
         if not self.install_path_var.get(): messagebox.showerror("错误", "请先设置安装根目录"); return
@@ -1276,11 +1498,19 @@ class SatisfactoryServerController:
         self.log_message("正在准备启动 SteamCMD (隐藏模式)...")
         def _run_installation():
             try:
+                # 获取代理配置
+                proxies = self.get_proxy_config() if self.proxy_enabled else None
+                
                 install_cmd = [steamcmd_exe, "+login", "anonymous", "+force_install_dir", server_dir, "+app_update", "1690800", "-beta", self.branch_var.get(), "+quit"]
                 self.log_message("执行命令：" + " ".join(install_cmd))
                 startupinfo = subprocess.STARTUPINFO(); startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW; startupinfo.wShowWindow = subprocess.SW_HIDE
                 self.log_message("SteamCMD 进程已启动，正在连接 Steam...")
-                result = subprocess.run(install_cmd, cwd=steamcmd_dir, check=True, timeout=3600, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True, encoding='utf-8', errors='ignore', startupinfo=startupinfo)
+                
+                # 使用代理配置运行安装命令
+                result = subprocess.run(install_cmd, cwd=steamcmd_dir, check=True, timeout=3600, 
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                        stdin=subprocess.DEVNULL, text=True, encoding='utf-8', 
+                                        errors='ignore', startupinfo=startupinfo)
                 if result.stdout:
                     lines = result.stdout.splitlines(); self.log_message("--- SteamCMD 输出开始 ---")
                     for line in lines:
@@ -1314,14 +1544,19 @@ class SatisfactoryServerController:
                     self.set_button_state('install', NORMAL)
                 self.root.after(0, on_exception)
         thread = threading.Thread(target=_run_installation, daemon=True); thread.start()
-
     def download_and_install_steamcmd(self, target_path):
         self.log_message(f"正在从官方源下载 SteamCMD 到 {target_path} ...")
+        
         def _run_download():
             try:
+                # 获取代理配置
+                proxies = self.get_proxy_config() if self.proxy_enabled else None
+                
                 if not os.path.exists(target_path): os.makedirs(target_path)
                 zip_path = os.path.join(target_path, "steamcmd.zip")
-                response = requests.get(STEAMCMD_DOWNLOAD_URL, stream=True, timeout=30); response.raise_for_status()
+                
+                # 使用代理配置下载
+                response = requests.get(STEAMCMD_DOWNLOAD_URL, stream=True, timeout=30, proxies=proxies); response.raise_for_status()
                 total_size = int(response.headers.get('content-length', 0)); downloaded_size = 0
                 with open(zip_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
@@ -1340,7 +1575,6 @@ class SatisfactoryServerController:
                 else: self.log_message("❌ 错误：解压后未找到 steamcmd.exe"); self.root.after(0, lambda: messagebox.showerror("错误", "解压失败"))
             except Exception as e: self.log_message(f"❌ 下载或安装 SteamCMD 失败：{str(e)}"); self.root.after(0, lambda: messagebox.showerror("错误", f"下载失败：{str(e)}"))
         thread = threading.Thread(target=_run_download, daemon=True); thread.start()
-
     def update_steamcmd(self):
         steamcmd_dir, _, steamcmd_exe, _ = self.get_paths()
         if not self.install_path_var.get(): messagebox.showerror("错误", "请先设置安装根目录"); return
@@ -1359,7 +1593,6 @@ class SatisfactoryServerController:
                 def on_error(): self.log_message(f"更新失败：{str(e)}"); messagebox.showerror("错误", f"更新失败：{str(e)}"); self.set_button_state('steamcmd', NORMAL)
                 self.root.after(0, on_error)
         thread = threading.Thread(target=_run_steamcmd_update, daemon=True); thread.start()
-
     def switch_branch(self):
         self.config["branch"] = self.branch_var.get(); self.save_config()
         self.log_message(f"已切换到 {self.branch_var.get()} 版本")
@@ -1371,7 +1604,10 @@ class SatisfactoryServerController:
     
     def check_remote_version(self):
         try:
-            response = requests.get(REMOTE_VERSION_URL, timeout=10); response.raise_for_status()
+            # 获取代理配置
+            proxies = self.get_proxy_config() if self.proxy_enabled else None
+            
+            response = requests.get(REMOTE_VERSION_URL, timeout=10, proxies=proxies); response.raise_for_status()
             version_data = response.json(); remote_version = version_data.get("version", "0.0")
             self.root.after(0, lambda: self.remote_version_label.config(text=f"最新版本：{remote_version}"))
             if self.parse_version(remote_version) > self.parse_version(LOCAL_VERSION): return True, remote_version
@@ -1381,15 +1617,20 @@ class SatisfactoryServerController:
     
     def fetch_changelog(self, version):
         try:
-            response = requests.get(REMOTE_CHANGELOG_URL, timeout=10); response.raise_for_status()
+            # 获取代理配置
+            proxies = self.get_proxy_config() if self.proxy_enabled else None
+            
+            response = requests.get(REMOTE_CHANGELOG_URL, timeout=10, proxies=proxies); response.raise_for_status()
             data = response.json(); log = data.get(version, data.get("default", "暂无详细更新日志。")); return log
         except: return "无法连接到日志服务器，暂无详细更新日志。"
-
     def download_update_package(self):
         try:
+            # 获取代理配置
+            proxies = self.get_proxy_config() if self.proxy_enabled else None
+            
             if not os.path.exists(TEMP_DOWNLOAD_DIR): os.makedirs(TEMP_DOWNLOAD_DIR)
             download_path = os.path.join(TEMP_DOWNLOAD_DIR, UPDATE_ZIP_NAME); self.log_message(f"开始下载更新包...")
-            response = requests.get(REMOTE_PACKAGE_URL, stream=True, timeout=30); response.raise_for_status()
+            response = requests.get(REMOTE_PACKAGE_URL, stream=True, timeout=30, proxies=proxies); response.raise_for_status()
             total_size = int(response.headers.get('content-length', 0)); downloaded_size = 0
             with open(download_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -1443,7 +1684,6 @@ class SatisfactoryServerController:
                 else: messagebox.showinfo("提示", "当前已是最新版本")
             self.root.after(0, process_result)
         thread = threading.Thread(target=_run_check, daemon=True); thread.start()
-
     def restart_application(self):
         python = sys.executable; script = os.path.abspath(sys.argv[0]); self.root.quit()
         try: os.execv(python, [python, script])
@@ -1464,7 +1704,7 @@ class SatisfactoryServerController:
             args = [server_exe, f"-MaxPlayers={self.max_players_var.get()}", f"-autosavecount={self.autosave_count_var.get()}"]
             self.log_message("正在启动服务器...")
             self.log_message(f"参数：MaxPlayers={self.max_players_var.get()}", f"AutoSaveCount={self.autosave_count_var.get()}")
-            self.log_message(f"所需端口：{self.game_port_var.get()} (TCP/UDP), {self.beacon_port_var.get()} (TCP)")
+            self.log_message(f"所需端口：{self.game_port_var.get()}", f"BeaconPort: {self.beacon_port_var.get()}")
             self.server_process = subprocess.Popen(args, cwd=server_dir); self.server_pid = self.server_process.pid
             self.log_message(f"服务器进程已启动，PID: {self.server_pid}")
             self.next_backup_time = None
@@ -1511,7 +1751,6 @@ class SatisfactoryServerController:
         except Exception as e: self.log_message(f"扫描残留进程时出错：{e}")
         time.sleep(1); self.server_process = None; self.server_pid = None; self.next_backup_time = None
         self.update_backup_timer_label(); self.log_message("服务器停止流程完成。"); self.reset_buttons()
-
     def reset_buttons(self):
         self.start_btn.config(state=NORMAL); self.stop_btn.config(state=DISABLED); self.restart_btn.config(state=DISABLED)
                 

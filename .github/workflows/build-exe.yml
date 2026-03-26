@@ -62,7 +62,7 @@ jobs:
             dist/*.exe
           # 自动生成Release说明
           body: |
-            ## 幸福工厂服务器管理器 ${{ github.ref_name }}
+            ## 幸福工厂服务器管理器 v${{ github.ref_name }}
             ### 自动构建信息
             - Python版本：3.10
             - 打包工具：PyInstaller
@@ -71,6 +71,6 @@ jobs:
             ✅ 修复实时日志显示不全问题
             ✅ 增加日志左右拖拽功能
           # 自动生成版本标题
-          name: 幸福工厂服务器管理器 ${{ github.ref_name }}
+          name: 幸福工厂服务器管理器 v${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
