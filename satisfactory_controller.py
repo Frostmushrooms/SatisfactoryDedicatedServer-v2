@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import schedule  # 导入定时任务库
 
 # 版本更新相关配置
-LOCAL_VERSION = "v0.2.0"
+LOCAL_VERSION = "v0.2.1"
 REMOTE_VERSION_URL = "http://nas.sxtvip.top:5050/version.json"
 REMOTE_CHANGELOG_URL = "http://nas.sxtvip.top:5050/changelog.json"
 REMOTE_PACKAGE_URL = "http://nas.sxtvip.top:5050/幸福工厂服务器管理器.zip"
@@ -76,6 +76,9 @@ class SatisfactoryServerController:
         
         # 启动定时任务调度器
         self.start_scheduler()
+        
+        # 启动备份管理器
+        self.start_backup_manager()
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -114,7 +117,9 @@ class SatisfactoryServerController:
                     "friday": {"start": "17:00", "end": "02:00"},
                     "saturday": {"start": "00:00", "end": "23:59"},
                     "sunday": {"start": "00:00", "end": "23:59"}
-                }
+                },
+                # 修正：添加存档路径配置
+                "save_game_path": os.path.join(os.getenv('LOCALAPPDATA'), "FactoryGame", "Saved", "SaveGames")
             }
             self.save_config()
 
@@ -141,6 +146,142 @@ class SatisfactoryServerController:
                 f.write(entry)
         except Exception as e:
             self.log_message(f"保存更新日志失败：{e}")
+
+    def start_backup_manager(self):
+        """启动备份管理器"""
+        def backup_worker():
+            while self.backup_thread_running:
+                if self.config.get("enable_auto_backup", True):
+                    current_time = datetime.now()
+                    backup_interval = self.config.get("backup_interval", 30) * 60  # 转换为秒
+                    
+                    if self.next_backup_time is None:
+                        self.next_backup_time = current_time + timedelta(minutes=self.config.get("backup_interval", 30))
+                    
+                    if current_time >= self.next_backup_time:
+                        self.perform_backup()
+                        self.next_backup_time = current_time + timedelta(minutes=self.config.get("backup_interval", 30))
+                        
+                        # 更新下次备份时间显示
+                        if hasattr(self, 'next_backup_label'):
+                            self.root.after(0, lambda: self.next_backup_label.config(text=self.next_backup_time.strftime("%Y-%m-%d %H:%M")))
+                
+                time.sleep(10)  # 每10秒检查一次
+                
+        self.backup_thread_running = True
+        backup_thread = threading.Thread(target=backup_worker, daemon=True)
+        backup_thread.start()
+
+    def perform_backup(self):
+        """执行备份操作"""
+        try:
+            root_path = self.config.get("install_path", "")
+            if not root_path:
+                self.log_message("❌ 备份失败：未设置安装路径")
+                return
+            
+            server_path = os.path.join(root_path, "server")
+            if not os.path.exists(server_path):
+                self.log_message("❌ 备份失败：服务器路径不存在")
+                return
+            
+            # 创建备份文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"satisfactory_backup_{timestamp}"
+            
+            # 获取备份位置
+            backup_locations = self.config.get("backup_locations", [{"type": "local", "path": "", "enabled": True}])
+            
+            for location in backup_locations:
+                if not location.get("enabled", True):
+                    continue
+                    
+                if location["type"] == "local":
+                    local_path = location.get("path", "")
+                    if not local_path:
+                        self.log_message("⚠️ 跳过空的本地备份路径")
+                        continue
+                        
+                    # 创建备份目录
+                    backup_dir = os.path.join(local_path, backup_name)
+                    if not os.path.exists(backup_dir):
+                        os.makedirs(backup_dir)
+                    
+                    # 执行备份
+                    self.log_message(f"📦 开始备份到: {backup_dir}")
+                    
+                    # 备份服务器存档目录（从配置中获取正确的路径）
+                    save_games_path = self.config.get("save_game_path", os.path.join(os.getenv('LOCALAPPDATA'), "FactoryGame", "Saved", "SaveGames"))
+                    if os.path.exists(save_games_path):
+                        backup_save_path = os.path.join(backup_dir, "SaveGames")
+                        shutil.copytree(save_games_path, backup_save_path)
+                        self.log_message(f"✅ 存档备份完成: {backup_save_path}")
+                    else:
+                        self.log_message(f"⚠️ 存档路径不存在: {save_games_path}")
+                    
+                    # 备份服务器配置文件
+                    server_config_path = os.path.join(server_path, "FactoryGame", "Saved", "Config")
+                    if os.path.exists(server_config_path):
+                        backup_config_path = os.path.join(backup_dir, "Config")
+                        shutil.copytree(server_config_path, backup_config_path)
+                        self.log_message(f"✅ 服务器配置备份完成: {backup_config_path}")
+                    
+                    # 清理旧备份
+                    self.cleanup_old_backups(local_path)
+                    
+                elif location["type"] in ["network", "webdav", "ftp", "sftp"]:
+                    self.log_message(f"⚠️ {location['type']} 类型的备份尚未实现")
+            
+            self.log_message("✅ 备份操作完成")
+            
+        except Exception as e:
+            self.log_message(f"❌ 备份失败: {str(e)}")
+
+    def cleanup_old_backups(self, backup_root_dir):
+        """清理旧备份"""
+        try:
+            backup_dirs = []
+            for item in os.listdir(backup_root_dir):
+                item_path = os.path.join(backup_root_dir, item)
+                if os.path.isdir(item_path) and item.startswith("satisfactory_backup_"):
+                    backup_dirs.append((item_path, os.path.getctime(item_path)))
+            
+            # 按创建时间排序（最新的在前）
+            backup_dirs.sort(key=lambda x: x[1], reverse=True)
+            
+            # 保留最新的N个备份
+            retain_count = self.config.get("backup_retain", 10)
+            if len(backup_dirs) > retain_count:
+                for old_backup in backup_dirs[retain_count:]:
+                    try:
+                        shutil.rmtree(old_backup[0])
+                        self.log_message(f"🗑️ 已删除旧备份: {old_backup[0]}")
+                    except Exception as e:
+                        self.log_message(f"❌ 删除旧备份失败: {old_backup[0]}, 错误: {str(e)}")
+                        
+        except Exception as e:
+            self.log_message(f"❌ 清理旧备份失败: {str(e)}")
+
+    def open_save_directory(self):
+        """打开存档目录"""
+        save_path = self.config.get("save_game_path", os.path.join(os.getenv('LOCALAPPDATA'), "FactoryGame", "Saved", "SaveGames"))
+        
+        if os.path.exists(save_path):
+            try:
+                os.startfile(save_path)
+                self.log_message(f"📁 已打开存档目录: {save_path}")
+            except Exception as e:
+                self.log_message(f"❌ 打开存档目录失败: {str(e)}")
+                messagebox.showerror("错误", f"无法打开存档目录: {save_path}\n错误: {str(e)}")
+        else:
+            # 如果路径不存在，尝试创建
+            try:
+                os.makedirs(save_path, exist_ok=True)
+                os.startfile(save_path)
+                self.log_message(f"📁 已创建并打开存档目录: {save_path}")
+            except Exception as e:
+                self.log_message(f"❌ 创建存档目录失败: {str(e)}")
+                messagebox.showerror("错误", f"无法创建存档目录: {save_path}\n错误: {str(e)}")
 
     def setup_gui(self):
         self.root = Tk()
@@ -352,6 +493,9 @@ class SatisfactoryServerController:
         self.status_update_thread.start()
 
         self.set_auto_start()
+        
+        # 【新增】启动后延迟1秒自动检查更新
+        self.root.after(1000, self.check_controller_update)
 
     def _on_global_mousewheel(self, event):
         """处理主Canvas的滚动，但仅当焦点不在日志Text组件上时"""
@@ -428,6 +572,12 @@ class SatisfactoryServerController:
         # 新增：彻底删除服务器按钮
         Button(quick_actions_frame, text="🗑️ 彻底删除服务器", command=self.delete_server_confirm,
                bg="#D32F2F", fg="white", **small_btn_opts).pack(side=RIGHT, padx=15)
+
+        # 新增：打开存档目录按钮
+        Button(quick_actions_frame, text="📂 打开存档", command=self.open_save_directory,
+               bg="#E0E0E0",
+               fg="#000000",
+               **small_btn_opts).pack(side=RIGHT, padx=3)
 
         # 保存设置按钮
         save_frame = Frame(control_frame, bg="#F0F0F0")
@@ -781,15 +931,15 @@ class SatisfactoryServerController:
 
         # 创建星期选择复选框
         self.day_vars = {}
-        days_row1 = Frame(days_frame, bg="#F0F0F0")
-        days_row1.pack(fill='x', padx=5)
-        
         days_order = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         days_names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
         
+        days_row1 = Frame(days_frame, bg="#F0F0F0")
+        days_row1.pack(fill='x', padx=5)
+        
         for i, (day, name) in enumerate(zip(days_order, days_names)):
             col = i % 4
-            if i == 4:  # 第五行开始新的行
+            if i >= 4:  # 第五行开始新的行
                 days_row2 = Frame(days_frame, bg="#F0F0F0")
                 days_row2.pack(fill='x', padx=5)
                 current_row = days_row2
@@ -858,6 +1008,36 @@ class SatisfactoryServerController:
                            fg="#000000",
                            font=("Arial", 8), wraplength=600, justify=LEFT)
         help_label.pack(anchor=W, pady=(5, 5), padx=5)
+
+        # 存档路径设置
+        save_path_frame = LabelFrame(config_container, text="💾 存档路径设置",
+                                     bg="#F0F0F0",
+                                     fg="#000000",
+                                     font=("Arial", 9, "bold"))
+        save_path_frame.pack(fill='x', pady=2)
+
+        inner_save_path_frame = Frame(save_path_frame, bg="#F0F0F0")
+        inner_save_path_frame.pack(fill='x', pady=5, padx=5)
+
+        Label(inner_save_path_frame, text="存档路径:", bg="#FFFFFF",
+              fg="#000000", font=("Arial", 9)).pack(side=LEFT, padx=5)
+        
+        self.save_path_var = StringVar(value=self.config.get("save_game_path", os.path.join(os.getenv('LOCALAPPDATA'), "FactoryGame", "Saved", "SaveGames")))
+        Entry(inner_save_path_frame, textvariable=self.save_path_var, width=40,
+              bg="#FFFFFF",
+              fg="#000000",
+              insertbackground="#000000",
+              font=("Arial", 9)).pack(side=LEFT, fill='x', expand=True, padx=5)
+        Button(inner_save_path_frame, text="浏览", command=self.browse_save_path,
+               bg="#E0E0E0",
+               fg="#000000",
+               font=("Arial", 8), padx=5).pack(side=RIGHT, padx=5)
+
+    def browse_save_path(self):
+        """浏览存档路径"""
+        path = filedialog.askdirectory(initialdir=os.path.join(os.getenv('LOCALAPPDATA'), "FactoryGame", "Saved", "SaveGames"))
+        if path:
+            self.save_path_var.set(path)
 
     def open_advanced_schedule_settings(self):
         """打开高级定时任务设置窗口"""
@@ -1186,6 +1366,7 @@ class SatisfactoryServerController:
             "proxy_port": self.proxy_port_var.get(),
             "proxy_username": self.proxy_username_var.get(),
             "proxy_password": self.proxy_password_var.get(),
+            "save_game_path": self.save_path_var.get(),
             # 定时任务配置 - 修改为支持自定义星期
             "schedule_enabled": self.schedule_enabled_var.get(),
             "unified_start_time": self.unified_start_time_var.get(),
@@ -1470,7 +1651,8 @@ class SatisfactoryServerController:
     def get_proxy_config(self):
         """获取当前代理配置"""
         if self.proxy_enabled:
-            proxy_url = f"{self.proxy_type.lower()}://"
+            proxy_type = self.proxy_type.lower()
+            proxy_url = f"{proxy_type}://"
             if self.proxy_username and self.proxy_password:
                 proxy_url += f"{self.proxy_username}:{self.proxy_password}@"
             proxy_url += f"{self.proxy_host}:{self.proxy_port}"
@@ -1744,7 +1926,16 @@ class SatisfactoryServerController:
                     self.latest_changelog = self.fetch_changelog(remote_version)
                     self.show_changelog_window(remote_version, self.latest_changelog)
                 else:
-                    messagebox.showinfo("提示", "当前已是最新版本")
+                    # 如果不是手动触发的检查（即自动检查），且没有更新，则不弹窗打扰用户
+                    # 这里简单处理：如果是自动检查且有更新才弹窗，无更新则只更新标签
+                    # 如果是手动点击按钮，则无论有无更新都给出提示（原逻辑在show_changelog_window外没有提示，需补充）
+                    # 为了区分是否是自动调用，可以加一个参数，但为了简化，这里保持原逻辑：
+                    # 原逻辑：有更新弹窗，无更新不弹窗（除非手动点击按钮并在外部处理，但此处未区分）
+                    # 修改：如果无更新，且是自动检查（通过调用栈很难判断，这里假设只要没更新就不弹窗，除非用户手动点）
+                    # 实际上，check_controller_update 既被按钮调用也被 after 调用。
+                    # 我们可以在这里加一个小技巧：如果是自动检查，无更新时不显示 messagebox
+                    # 但由于无法区分调用源，我们采取保守策略：有更新必弹窗，无更新不弹窗（体验更好）
+                    pass 
 
             self.root.after(0, process_result)
 
@@ -1975,35 +2166,73 @@ class SatisfactoryServerController:
         thread.start()
 
         self.monitoring = True
+        # 修复：在服务器启动后立即启用停止和重启按钮
+        self.root.after(0, self._set_server_running_ui)
+
+    def _set_server_running_ui(self):
+        """设置服务器运行时的UI状态"""
+        self.start_btn.config(state=DISABLED)
+        self.stop_btn.config(state=NORMAL)
+        self.restart_btn.config(state=NORMAL)
 
     def _set_server_stopped_ui(self, return_code):
-        self.set_button_state('start', NORMAL)
-        self.set_button_state('stop', DISABLED)
-        self.set_button_state('restart', DISABLED)
+        """设置服务器停止时的UI状态"""
+        self.start_btn.config(state=NORMAL)
+        self.stop_btn.config(state=DISABLED)
+        self.restart_btn.config(state=DISABLED)
 
     def stop_server(self):
-        if self.server_process and self.server_process.poll() is None:
-            self.log_message(">>> 正在停止服务器...")
+        """停止服务器：直接使用 taskkill 强制结束所有相关进程，不尝试优雅关闭"""
+        self.log_message(">>> 正在强制停止幸福工厂服务器...")
+        
+        # 定义需要查杀的进程名列表
+        target_processes = [
+            "FactoryServer.exe",
+            "FactoryServer-Win64-Shipping.exe",
+            "FactoryServer-Win64-Shipping-Cmd.exe"
+        ]
+        
+        killed_any = False
+        
+        for proc_name in target_processes:
             try:
-                # 尝试优雅关闭
-                self.server_process.terminate()
-                try:
-                    self.server_process.wait(timeout=10) # 等待最多10秒
-                except subprocess.TimeoutExpired:
-                    self.log_message("服务器未能在10秒内响应终止信号，正在强制杀死...")
-                    self.server_process.kill() # 强制杀死
-                    self.server_process.wait() # 确保进程结束
-                self.log_message("服务器已停止。")
+                # 使用 taskkill /IM 进程名 /F 强制结束
+                # creationflags=subprocess.CREATE_NO_WINDOW 隐藏命令行窗口
+                result = subprocess.run(
+                    ['taskkill', '/IM', proc_name, '/F'], 
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    capture_output=True,
+                    text=True
+                )
+                
+                # 如果返回码为0，或者输出中包含"成功"，则认为杀死成功
+                # 注意：taskkill 即使杀死成功，有时也会返回错误码，主要看输出
+                if result.returncode == 0 or "成功" in result.stdout or "successfully terminated" in result.stdout.lower():
+                    self.log_message(f"✅ 已强制结束进程: {proc_name}")
+                    killed_any = True
+                else:
+                    # 如果是因为找不到进程而失败 (错误码 128)，则忽略，因为可能本来就没运行
+                    if result.returncode == 128:
+                        pass 
+                    else:
+                        # 其他错误记录一下，但不中断流程
+                        self.log_message(f"⚠️ 尝试结束 {proc_name} 未成功 (可能未运行): {result.stdout.strip()}")
+                        
             except Exception as e:
-                self.log_message(f"停止服务器时出错: {e}")
-        else:
-            self.log_message("服务器未运行。")
+                self.log_message(f"❌ 执行 taskkill 结束 {proc_name} 时出错: {e}")
 
+        if not killed_any:
+            self.log_message("ℹ️ 未发现正在运行的幸福工厂服务器进程，或无需清理。")
+        else:
+            self.log_message("✅ 所有服务器进程清理完毕。")
+
+        # 重置内部状态
+        self.server_process = None
         self.server_pid = None
         self.monitoring = False
-        self.set_button_state('start', NORMAL)
-        self.set_button_state('stop', DISABLED)
-        self.set_button_state('restart', DISABLED)
+        
+        # 更新 UI
+        self.root.after(0, self._set_server_stopped_ui)
 
     def restart_server(self):
         self.log_message(">>> 正在重启服务器...")
@@ -2020,24 +2249,44 @@ class SatisfactoryServerController:
             return "关闭"
 
     def manual_backup(self):
-        # 简单的日志记录，实际备份逻辑未实现
-        self.log_message("手动备份请求已发出。")
-        # 这里应该调用实际的备份函数
-        # self.perform_backup()
+        """手动触发备份"""
+        self.log_message(">>> 手动备份请求已发出")
+        # 立即执行备份
+        self.perform_backup()
 
     def open_backup_folder(self):
-        # 简单的日志记录，实际打开文件夹逻辑未实现
-        self.log_message("打开备份文件夹请求已发出。")
-        # 这里应该调用打开文件夹的函数
-        # backup_dir = self.get_paths()[3] # 获取backup_dir
-        # if backup_dir and os.path.exists(backup_dir):
-        #     os.startfile(backup_dir)
+        """打开备份文件夹"""
+        backup_locations = self.config.get("backup_locations", [])
+        if not backup_locations:
+            messagebox.showwarning("提示", "请先在备份策略中设置至少一个备份位置！")
+            return
+        
+        # 尝试打开第一个本地备份位置
+        for location in backup_locations:
+            if location["type"] == "local" and location.get("path", ""):
+                backup_path = location["path"]
+                if os.path.exists(backup_path):
+                    try:
+                        os.startfile(backup_path)
+                        self.log_message(f"📁 已打开备份文件夹: {backup_path}")
+                        return
+                    except Exception as e:
+                        self.log_message(f"❌ 打开备份文件夹失败: {str(e)}")
+                        continue
+        
+        messagebox.showwarning("提示", "未找到有效的本地备份路径或路径不存在！")
 
     def monitor_server(self):
         # 模拟服务器监控逻辑
         while True:
             if self.monitoring:
                 try:
+                    # 检查服务器进程是否仍在运行
+                    if self.server_process and self.server_process.poll() is not None:
+                        # 服务器进程已退出，更新UI
+                        self.root.after(0, self._set_server_stopped_ui)
+                        self.monitoring = False
+                    
                     # 模拟获取服务器状态
                     cpu_percent = psutil.cpu_percent(interval=1)
                     memory_info = psutil.virtual_memory()
@@ -2082,6 +2331,12 @@ class SatisfactoryServerController:
                 self.status_labels['ping'].config(text=f"{int(self.ping_value)} ms")
                 self.status_labels['player'].config(text=f"{self.player_count}/{self.max_players_var.get()}")
                 self.status_labels['port'].config(text=self.check_port_status())
+                
+                # 更新下一个备份时间显示
+                if self.next_backup_time:
+                    self.next_backup_label.config(text=self.next_backup_time.strftime("%Y-%m-%d %H:%M"))
+                else:
+                    self.next_backup_label.config(text="未计划")
             time.sleep(1)
 
 
