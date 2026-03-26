@@ -1,0 +1,32 @@
+{
+    "install_path": "",
+    "max_players": 4,
+    "auto_restart": true,
+    "auto_start": false,
+    "branch": "public",
+    "theme": "light",
+    "game_port": 7777,
+    "beacon_port": 8888,
+    "autosave_count": 5,
+    "backup_interval": 30,
+    "backup_retain": 10,
+    "enable_auto_backup": true,
+    "monitor_host": "localhost",
+    "backup_locations": [
+        {
+            "type": "local",
+            "path": "",
+            "enabled": true
+        }
+    ],
+    "qq_api_enabled": false,
+    "qq_bot_token": "",
+    "qq_bot_id": "",
+    "qq_group_id": "",
+    "proxy_enabled": false,
+    "proxy_type": "HTTP",
+    "proxy_host": "",
+    "proxy_port": "",
+    "proxy_username": "",
+    "proxy_password": ""
+}
