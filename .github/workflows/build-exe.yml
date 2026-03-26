@@ -37,7 +37,7 @@ jobs:
       # 步骤4：用PyInstaller打包EXE（适配GUI程序）
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller -F -w --name "satisfactory_controller" --noupx satisfactory_controller.py
+          pyinstaller -F -w --name "幸福工厂服务器管理器" --noupx satisfactory_controller.py
           # 参数说明：
           # -F：单文件EXE（方便分发）
           # -w：隐藏控制台（GUI程序必备）
@@ -55,7 +55,7 @@ jobs:
       # 步骤6：创建Release并上传EXE（仅打标签时执行）
       - name: Create Release and Upload EXE (only on tag)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-SatisfactoryDedicatedServer-v2
+        uses: softprops/action-gh-release@v2
         with:
           # 上传dist目录下的EXE文件
           files: |
@@ -67,12 +67,15 @@ jobs:
             - Python版本：3.10
             - 打包工具：PyInstaller
             - 构建环境：Windows Server 2022
-            ### 修复日志
-            ✅ 新增网络测试按钮，检查网络联通情况
-            ✅ 新增网络代理面板
-            ✅优化界面布局
-            ✅优化缩放窗口时显示不全问题
+            ### 核心功能
+            ✅ 恢复 自定义服务器网络监控设置功能
+            ✅ 修复 自动备份问题
+            ✅ 修复 停止服务器时，服务器仍在工作问题
+            ✅ 新增 版本更新提示功能
+            ✅ 修复 steamcmd更新不成功问题
+            ✅ 优化 滚动日志时控制窗口同时滚动问题
+            ✅ 新增 可以自定义定时启动关闭服务器
           # 自动生成版本标题
-          name: 幸福工厂服务器管理器 v${{ github.ref_name }}
+          name: Release v${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
